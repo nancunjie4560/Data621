@@ -1,0 +1,782 @@
+---
+title: "CUNY SPS DATA621 FINAL Project: Predicting Violent Crime"
+author: Anil Akyildirim, John K. Hancock, John Suh, Emmanuel Hayble-Gomes, Chunjie Nan
+date: "05/22/2020"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    code_download: yes
+    code_folding: hide
+    highlight: pygments
+    number_sections: no
+    theme: flatly
+    toc: yes
+    toc_float: yes
+---
+
+
+```{r, message=FALSE, include=FALSE}
+
+#Load Libraries
+library(mice)
+library(ggplot2)
+library(ggcorrplot)
+library(tidyverse)
+library(caret)
+library(MASS)
+library(imputeTS) # Used for imputing missing values
+library(nortest) # Test for normality
+library(moments) # Skewness and kurtosis
+library(glmnet)
+library(mltest)
+library(car)
+library(rpart)
+library(rpart.plot)
+library(pscl)
+library(boot)
+library(broom) # glance function
+library(WVPlots) # Gini Curve plot
+library(modelr) # rsquare function
+library(BBmisc)
+library(reshape2)
+library(rcompanion)
+library(rsample)
+library(knitr)
+library(kableExtra)
+```
+
+
+##  Abstract
+Violent crime is a major social problem which lowers the quality of life for communities. Besieged communities are always looking for ways to understand and predict violent crimes. This project assessed the use of linear regression models to predict the incidences of violent crimes. We chose the Communities and Crime normalized dataset from the UCI Machine Learning Repository. We used four forms of regression analysis, Multiple Regression, Ridge Regression, Lasso Regression, and Elastic Net Regression to build models based on 100 independent variables. 
+
+
+##  Key words
+Violent Crime, Linear Regression, Ridge Regression, Lasso Regression, Elastic Net Regression RMSE, Rsquared, lambda
+
+## Introduction: 
+Communities have long struggled to prevent and constrain their rates of violent crime. Being able to predict the rate of violent crime allows these communities to take the necessary steps and investments in resources to prevent its occurence. Understanding the key variables that contribute to violent crime goes a long way towards allocation of resources, police, educational, recreational, as a means of preventing further incidences. 
+
+We selected the Communities and Crime dataset from the UCI Machine Learning Repository\(^1\) [Link](https://archive.ics.uci.edu/ml/datasets/Communities+and+Crime). "Many variables are included so that algorithms that select or learn weights for attributes could be tested. However, clearly unrelated attributes were not included; attributes were picked if there was any plausible connection to crime (N=122), plus the attribute to be predicted (Per Capita Violent Crimes). The variables included in the dataset involve the community, such as the percent of the population considered urban, and the median family income, and involving law enforcement, such as per capita number of police officers, and percent of officers assigned to drug units. The per capita violent crimes variable was calculated using population and the sum of crime variables considered violent crimes in the United States: murder, rape, robbery, and assault. There was apparently some controversy in some states concerning the counting of rapes. These resulted in missing values for rape, which resulted in incorrect values for per capita violent crime. These cities are not included in the dataset. Many of these omitted communities were from the midwestern USA." [Id](https://archive.ics.uci.edu/ml/datasets/Communities+and+Crime)
+
+
+This project uses four different regression modeling techniques, Multiple Linear Regression, Ridge Regression, Lasso Regression, and Elastic Net Regression to make predictions on the dataset. Before building the models we prepared the data by looking for missing data points, removing correlated variables, normalizing the skewed variables, and splitting the data into training and test sets. 
+
+Our goal was to see if regression analysis could use this data to discover key variables that influence the occurence of violent crime.
+
+## Literature review: 
+For this project, We reviewed, "USING MACHINE LEARNING ALGORITHMS TO ANALYZE CRIME DATA" by Lawrence McClendon and Natarajan Meghanathan (Jackson State University, 1400 Lynch St, Jackson, MS, USA) (Machine Learning and Applications: An International Journal (MLAIJ) Vol.2, No.1, March 2015 )\(^2\) They performed a comparative analysis between the UCI dataset and the state of Mississippi's own crime statistics in order to discern patterns of violent crime. They used Linear Regression and Decision Tree algorithms. They found that Linear regression was more effective. 
+
+We also reviewed, "A Convex Framework for Fair Regression" by Richard Berk, Hoda Heidari , Shahin Jabbari, Matthew Joseph, Michael Kearns , Jamie Morgenstern, Seth Neel , and Aaron Roth (Department of Statistics,  Department of Criminology, Department of Computer and Information Science of the University of Pennsylvania)(June 9, 2017)
+Citation: 	arXiv:1706.02409 [cs.LG] \(^3\) In their analysis, they looked at the use of regularization to reduce model complexity and overfitting. Their analysis was the inspiration for us to use the RIDGE, LASSO, and Elastic Net regression models to control over-fitting and reducing model complexity. 
+
+Lastly, we reviewed "A Comparative Study to Evaluate Filtering Methods for Crime Data Feature Selection" by Masila Abdul Jalil, Fatihah Mohd, and Noor Maizura Mohamad Noor (School of Informatics and Applied Mathematics, Universiti Malaysia Terengganu, 21030 Kuala Terengganu, Terengganu, Malaysia) (October 2017)\(^4\) Their objective was  to  find  a  attributes  from  a  dataset  to classify the crimes into three different categories; low, medium and high. We were inspired by their use of feature selection.  
+
+
+##  Methodology
+The dataset is comprised of 1,994 observations and 1oo variables. Once the variables, communityname, state, OtherPerCap, were removed, all of the variables were numeric.  Given the number of variables, it was obvious to us that the models may wind up being overly complex and over-fitted on the training data.
+
+Our next step was to prepare the data for analysis. We did the following:
+
+A. Checked for Missing Data and impute missing values
+B. Checked for Multicollinearity
+C. Checked for Normality and normalize the data
+E. Split the Communities_Crime_Train dataset into Train and Test
+
+The dataset did not contain any missing values, so we moved on to checking for correlations between the now 97 variables ignoring the response variable, ViolentCrimesPerPop. Multicollinearity happens when there is a high correlation between one or more variables which leads to redundant data.
+
+A variance inflation factor(VIF) detects multicollinearity in regression analysis. It estimates how much the variance of a regression coefficient is inflated due to multicollinearity in the model. From the car package, we used the function "vif" to score the variables on multicollinearity. A score of 10 or more meant that the variables were removed from the dataset. Here, we removed those independent variables that were correlated which reduced the number of variables from 100 to 34.
+
+
+Next, we checked for skewed data and transformed negatively and positively skewed data to make them normal. For the neatgively skewed data we created a function which applied this function:log10(max(x+1) - x). For the positively skewed data, we simply took the square root of each value.
+
+
+Lastly, we split the dataset into training and test sets. The split was done once for the linear regression step model, and split a second time for the other three models, Ridge Regression, LASSO Regression, and the Elastic Net Regression models. For each of these three models, we created a matrix for all of the independent variables and copied the response variable into its own variable, "y". Next,using cross validation we tried a sequence of lambdas, the regularization parameter. 
+
+
+##  Experimentation and Results
+We built four regression models:
+Linear REGRESSION model (OLS) using stepwise coefficient selection
+RIDGE REGRESSION model
+LASSO REGRESSION model
+ELASTIC NET REGRESSION model. 
+
+The OLS linear regression model, VC_Step_model, was built using the 34 independent variables. The step() function used backwards and forwards elimination to determine the best coefficients to build the best model which had an RMSE of 0.136 and a Rsqaure score of .63 when the model predicted on the test set. To reduce the variance of the model, we eliminated 64 correlated variables.\(^6\)
+
+The Ridge regression is an extension of linear regression where the loss function is modified to minimize the complexity of the model. This modification is done by adding a penalty parameter that is equivalent to the square of the magnitude of the coefficients. We reduce the sum of the squares residuals and penalize the size of parameter estimates. We began by splitting the data once again into train and test sets. Next, we performed cross-validation to select the value of lambda that minimizes the cross-validated sum of squared residuals. \(^6\) Using gmlet with an alpha=0 and a lambda=0.009326, We applied Ridge regression and got an RMSE of .133 and an Rsqaure of .64 which is an improvement over the OLS linear regression model.
+
+
+"Lasso, or Least Absolute Shrinkage and Selection Operator, is quite similar conceptually to ridge regression. It also adds a penalty for non-zero coefficients, but unlike ridge regression which penalizes sum of squared coefficients (the so-called L2 penalty), lasso penalizes the sum of their absolute values (L1 penalty)".As a result, for high values of ??, many coefficients are exactly zeroed under lasso, which is never the case in ridge regression.\(^6\) We followed the exact same steps as with the Ridge regression model.  We got an RMSE of .133 and an Rsquare of .64 which is identical to the Ridge model.
+
+"Elastic Net first emerged as a result of critique on lasso, whose variable selection can be too dependent on data and thus unstable. The solution is to combine the penalties of ridge regression and lasso to get the best of both worlds."\(^6\). Elastic net is a regularized regression method that linearly combines the L1 and L2 penalties of the lasso and ridge methods. As with the previous two models, Ridge and LASSO, we have to set the lambda parameter, but unlike the previous two, we also have to set the alpha parameter.  We used the caret package to automatically set and tune the lambda and alpha parameters using a combination of 25 different lambdas and alpha values.  The end result is that the best alpha was .1375 and the best lambda is 0.0178.  The RMSE and Rsqaure values were 0.1288544 and 0.66 
+
+
+##  Discussion and Conclusions
+```{r, include=F}
+results <- matrix(c("VC_Step_Model", 0.1356970,	0.6284, "VC_Ridge_Model",	0.1330519,	0.6398185, "VC_Lasso_Model",	0.1330618,	0.6397077, "VC_ENR_model",	0.1288544,	0.6634376), ncol=3,nrow=4, byrow = T)
+colnames(results) <- c("ModelName", "RMSE", "Rsquare")
+rownames(results) <- c("","" ,"" ,"" )
+results
+```
+
+The table below summarizes our findings of the four models. The Elastic Net Regression model,"VC_ENR_model", had the lowest RMSE and the highest Rsquare score.
+
+```{r, echo=FALSE}
+knitr::kable(results,"markdown", align = 'c')
+```
+
+
+To start the discussion we want to examine some of the key coefficients of the model. Starting with the top three coefficients of this model:  
+
+- "PctTeen2Par" which is the the percentage of kids aged 12 to 17 in two parent homes
+- "PctHousOccup", the percentage of housing occupied
+- "PctSameCity85", the percentage of people living in the same city
+
+We can infer that teens may be a statistically significant source of the problems with violent crime. Additionally, the higher the occupancy of housing, or density of population also contributes to violent crime.  Finally, the less transient the population is--here defined as people living in the same citry for the last 5 years"--shows that it has a negative effect on violent crime. 
+
+```{r, include=FALSE}
+topCoeff <- matrix(c(1.244844210,0.53692226,-0.445948912), ncol = 3, byrow=TRUE)
+colnames(topCoeff) <- c("PctTeen2Par","PctHousOccup","PctSameCity85")                    
+rownames(topCoeff) <- c("")
+topCoeff
+```
+
+```{r, echo=FALSE}
+knitr::kable(topCoeff,"markdown", align = 'c')
+```
+
+```{r, include=FALSE}
+housingQualityTable <- matrix(c(
+-0.054749612,
+-0.053725218,
+-0.016154825,
+-0.065540034,
+ 0.185972176,
+ 0.097926956,
+ 0.172466010
+        ),nrow=7)
+
+rownames(housingQualityTable) <- c(        
+"MedOwnCostPctIncNoMtg",
+"pctWFarmSelf",
+"MedNumBR",            
+"PctVacMore6Mos", 
+"PctVacantBoarded",    
+"NumInShelters",       
+"NumStreet"
+)
+
+colnames(housingQualityTable) <- c("")
+
+housingQualityTable
+
+```
+
+The next group of coefficients can be categorized as housing related. These housing coefficients: "MedOwnCostPctIncNoMtg, median owners cost as a percentage of household income - for owners without a mortgage. "pctWFarmSelf",percentage of households with farm or self employment income, "MedNumBR", median number of bedrooms, and "PctVacMore6Mos", percent of vacant housing that has been vacant more than 6 months. All have a negative impact on violent crime.  We can infer that more housing stability may act to lower the rate of violent crime. 
+
+
+These next housing related coefficients, "PctVacantBoarded", the percent of vacant housing that is boarded up, "NumInShelters", number of people in homeless shelters, and "NumStreet" , number of homeless people counted in the street
+
+
+```{r, echo=FALSE}
+knitr::kable(housingQualityTable,"markdown", align = 'c')
+```
+The next set of coefficients of interest relate to ethnicity and income. "blackPerCap", "indianPerCap", and "HispPerCap" show that the higher income per each ethnic group lowers the rate of violent crime.
+
+```{r, include=FALSE}
+incomeTable <- matrix( c(-0.028161126, -0.002883816,-0.041325116),ncol=3,byrow=TRUE)
+colnames(incomeTable) <- c("blackPerCap","indianPerCap","HispPerCap")
+rownames(incomeTable) <- c("")
+incomeTable
+```
+
+
+```{r, echo=FALSE}
+knitr::kable(incomeTable,"markdown", align = 'c')
+```
+
+
+In sum, we can infer from this model that the more stable a community when it comes to housing, specifically home ownership, income levels of ethic groups, these community attributes lower the rate of violent crime. Converesely, if there is a high percentage of teens, aged 12 to 17, there is a greater chance of violent crime. 
+
+Although the Elastic Net Regression model, "VC_ENR_model", performed the best of all of the models, we cannot infer too much from the model since it's Rsquare score only explains about 66% of the variation. 
+
+
+## R statistical programming code.
+
+#### Load the training data set
+
+```{r, message=FALSE, include=FALSE}
+Communities_Crime_raw <- read.csv("https://raw.githubusercontent.com/JohnKHancock/raw.github/master/CUNY_DATA_621_DATA/Data/Communities_Crime.csv", header=T, sep = ",")
+
+```
+
+
+
+```{r, message=FALSE, include=FALSE}
+colnames(Communities_Crime_raw)[1] <- "state"
+head(Communities_Crime_raw,10)
+```
+
+
+```{r, message=FALSE, include=FALSE}
+Communities_Crime_raw <- Communities_Crime_raw %>% dplyr::na_if("?")
+
+colSums(is.na(Communities_Crime_raw))
+```
+
+#### Data Exploration
+
+##### Descriptive Statistics
+To start the process, we copied the raw dataset into a new variable called "Communities_Crime_Train".
+We can start exploring our training data set by looking at basic descriptive statistics. 
+We see that there are 1994 observations and 100 variables.
+
+```{r}
+Communities_Crime_Train = as.data.frame(Communities_Crime_raw)
+dim(Communities_Crime_Train)
+```
+communityname, state, OtherPerCap
+
+```{r}
+remove <- c("communityname", "state", "OtherPerCap")
+
+Communities_Crime_Train[remove]<-NULL
+```
+
+
+
+The response variable for this project will be "violentPerPop".
+
+
+```{r message=FALSE, fig.height=5, fig.width= 10, fig.align='center'}
+plotNormalHistogram(Communities_Crime_Train$ViolentCrimesPerPop)
+```
+
+#### Data Preparation
+In this section, we prepared the dataset for linear regression modeling.  We did the following:
+
+A. Checked for Missing Data and impute missing values
+B. Checked for Multicollinearity
+C. Checked for Normality and normalize the data
+E. Split the Communities_Crime_Train dataset into Train and Test
+
+```{r}
+dimensions <- dim(Communities_Crime_Train)
+```
+
+
+A. Check for Missing Values
+
+Below, we created a metastats table for the dataset and as you can see there are no missing values
+```{r}
+#Check for Missing Values
+metastats <- data.frame(psych::describe(Communities_Crime_Train))
+metastats <- tibble::rownames_to_column(metastats, "attributes")
+metastats["pct_complete"] <- round(metastats["n"]/dimensions[1], 3)
+metastats$attributes <- gsub('\\*', '', metastats$attributes)
+metastats %>% dplyr::select(1, 15) %>% filter(pct_complete <1 )
+
+
+  
+```
+
+
+
+B. Check for Multicollinearity
+
+Multicollinearity happens when there is a high correlation between one or more variables which leads to redundant data.
+
+The Variance Inflation Factor
+
+"A variance inflation factor(VIF) detects multicollinearity in regression analysis. Multicollinearity is when there's correlation between predictors (i.e. independent variables) in a model; it's presence can adversely affect your regression results. The VIF estimates how much the variance of a regression coefficient is inflated due to multicollinearity in the model."
+
+[Variance Inflation Factor](https://www.statisticshowto.com/variance-inflation-factor/)\(^5\)
+
+Obtain the Variance Inflation Factor by calling the vif function.  A VIF of more than 10, then it indicates multicollinearity.
+
+```{r}
+#Check for Multicollinearity
+
+coll_model <- lm(ViolentCrimesPerPop~.,data=Communities_Crime_Train)
+alias(coll_model)
+
+```
+
+```{r, include=FALSE}
+vif(coll_model)
+```
+
+The table below shows the variables and their multicollinearity scores.
+
+```{r}
+multicoll <- data.frame(round(vif(coll_model),4))
+multicoll$variables <- rownames(multicoll) 
+colnames(multicoll) <- c("scores", "vars")
+rownames(multicoll) <- NULL
+multicoll  %>% dplyr::select(2,1) %>%  filter(scores > 10) %>% arrange(desc(scores))
+```
+In this block, we retained those variables whose vif score was less than 10
+
+
+```{r, include=FALSE}
+colnames(Communities_Crime_Train)
+```
+
+```{r}
+ViolentCrimesPerPop <- Communities_Crime_Train$ViolentCrimesPerPop
+```
+
+
+```{r}
+
+retain <- multicoll$vars[multicoll$scores<10]
+retain <- str_replace(retain, "`", "")
+retain <- str_replace(retain, "`", "")
+Communities_Crime_Train_Cleaned  <- subset(Communities_Crime_Train, select=c(retain))
+Communities_Crime_Train_Cleaned <- cbind(Communities_Crime_Train_Cleaned, ViolentCrimesPerPop)
+dim(Communities_Crime_Train_Cleaned)
+```
+We now see that by removing the correlated variables reduces their numbers from 100 to 34. 
+
+The correlation plot below shows little to no correlation between the attributes. 
+
+
+```{r fig.height=15, fig.width= 15, fig.align='center'}
+# Look at correlation between variables
+
+corr <- round(cor(Communities_Crime_Train_Cleaned), 1)
+
+ggcorrplot(corr,
+           type="lower",
+           lab=TRUE,
+           lab_size=3,
+           method="circle",
+           colors=c("tomato2", "white", "springgreen3"),
+           title="Correlation of variables in Training Data Set",
+           ggtheme=theme_bw)
+
+```
+
+D. Check for Normality
+
+ Below, we update the metastats dataframe for the cleaned dataset, Communities_Crime_Train_Cleaned2.
+
+```{r}
+metastats <- data.frame(psych::describe(Communities_Crime_Train_Cleaned))
+metastats <- tibble::rownames_to_column(metastats, "attributes")
+metastats["pct_complete"] <- round(metastats["n"]/dimensions[1], 3)
+metastats$attributes <- gsub('\\*', '', metastats$attributes)
+metastats$variance <- (metastats$sd)^2
+head(metastats,10)
+```
+First, we determine and remove from the dataset those variables that have a zero variance, and we found that none of the variables have a zero variance.
+
+```{r}
+removeZeroVariance <- metastats$variables[metastats$variance < 1]
+removeZeroVariance 
+```
+
+
+Let's look at some interesting part of the data by exploring the dependent variables: nonViolPerPop and violentPerPop
+
+
+```{r}
+
+p2<-ggplot(Communities_Crime_Train_Cleaned, aes(x=ViolentCrimesPerPop)) + 
+  geom_histogram(color="yellow", fill="red", bins=40) +
+  ggtitle("Violent per Population")
+
+p2
+```
+
+We see that ViolentCrimesPerPop is negatively skewed.
+
+```{r}
+qqPlot(Communities_Crime_Train_Cleaned$ViolentCrimesPerPop)
+qqnorm(Communities_Crime_Train_Cleaned$ViolentCrimesPerPop,pch = 1, cex = 0.5)
+qqline(Communities_Crime_Train_Cleaned$ViolentCrimesPerPop, col = "red", lwd = 1)
+
+```
+A look at a skewed variable
+
+```{r}
+PcTeen2Par <- Communities_Crime_Train_Cleaned$PctTeen2Par
+v1 <-ggplot(Communities_Crime_Train_Cleaned, aes(x=PcTeen2Par)) + 
+  geom_histogram(color="yellow", fill="blue", bins=40) +
+  ggtitle("Pct of Teens with 2 Parents 12-17") 
+  
+
+v1 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+skewedVars <- metastats %>% dplyr::select(1,12,13) %>% filter(skew > .5 | skew < -.5)
+correctSkew <- skewedVars$attributes
+NormalizedVars <- Communities_Crime_Train_Cleaned[correctSkew]
+
+```
+
+```{r message=FALSE, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(NormalizedVars) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+
+```{r}
+negTransform <- function(x){
+      x <- log10(max(x+1) - x)
+        return (x)
+}
+
+```
+
+
+```{r}
+neg_skewedVars <- metastats %>% dplyr::select(1,12,13) %>% filter(skew < -.5)
+correctNegSkew <- neg_skewedVars$attributes
+Normalized_Neg_Vars <- Communities_Crime_Train_Cleaned[correctNegSkew]
+
+
+Normalized_Neg_Vars <- as.data.frame(apply(Normalized_Neg_Vars,2,negTransform))
+
+
+```
+
+
+
+```{r message=FALSE, fig.height=6, fig.width= 10, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(Normalized_Neg_Vars) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+```{r}
+PcTeen2Par <- Normalized_Neg_Vars$PctTeen2Par
+v1 <-ggplot(Communities_Crime_Train_Cleaned, aes(x=PcTeen2Par)) + 
+  geom_histogram(color="yellow", fill="blue", bins=40) +
+  ggtitle("Pct of Teens with 2 Parents 12-17") 
+  
+
+v1 
+```
+
+
+
+
+
+
+
+
+
+```{r}
+
+
+pos_skewedVars <- metastats %>% dplyr::select(1,12,13) %>% filter(skew > 1)
+correctPosskew <- pos_skewedVars$attributes
+Normalized_Pos_Vars <- Communities_Crime_Train_Cleaned[correctPosskew]
+
+
+Normalized_Pos_Vars <- as.data.frame(apply(Normalized_Pos_Vars,2,sqrt))
+
+head(Normalized_Pos_Vars,10)
+```
+
+
+
+```{r message=FALSE, fig.height=6, fig.width= 10, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(Normalized_Pos_Vars) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+
+
+
+```{r}
+normalizedVars <- c(colnames(Normalized_Pos_Vars), colnames(Normalized_Neg_Vars))
+Communities_Crime_Train_Cleaned[normalizedVars] <- NULL
+Communities_Crime_Train_Cleaned_Normalized <- cbind(Normalized_Pos_Vars,Normalized_Neg_Vars,Communities_Crime_Train_Cleaned)
+```
+
+
+
+
+```{r}
+head(Communities_Crime_Train_Cleaned_Normalized)
+```
+
+
+```{r message=FALSE, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(Communities_Crime_Train_Cleaned_Normalized) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+
+```{r}
+metastats <- data.frame(psych::describe(Communities_Crime_Train_Cleaned_Normalized))
+metastats <- tibble::rownames_to_column(metastats, "attributes")
+metastats["pct_complete"] <- round(metastats["n"]/dimensions[1], 3)
+metastats$attributes <- gsub('\\*', '', metastats$attributes)
+metastats$variance <- (metastats$sd)^2
+metastats
+```
+
+```{r}
+missing_vaues <- metastats[metastats$pct_complete < 1,] 
+missing_vaues[order(missing_vaues$pct_complete),]
+```
+```{r}
+
+p4<-ggplot(Communities_Crime_Train_Cleaned_Normalized, aes(x=ViolentCrimesPerPop)) + 
+  geom_histogram(color="yellow", fill="red", bins=40) +
+  ggtitle("Non Violent per Population")
+
+p4
+```
+
+E. Split the Communities_Crime_Train dataset into Train and Test sets for Non Violent and Violent Crime
+
+
+Violent Crime Split
+
+```{r}
+set.seed(1234)
+train <- createDataPartition(y = Communities_Crime_Train_Cleaned_Normalized$ViolentCrimesPerPop, p = 0.80, list = FALSE)
+VC_train <- na.omit(Communities_Crime_Train_Cleaned_Normalized[train,])
+VC_test  <- na.omit(Communities_Crime_Train_Cleaned_Normalized[-train,])
+```
+
+```{r}
+dim(VC_train)
+```
+
+
+
+
+#### Build Models
+
+In this section, we built models to predict Violent Crimes per Population and used three different approaches for each prediction:
+
+1. Linear REGRESSION model using stepwise coefficient selection.
+2. LASSO REGRESSION model
+3. RIDGE REGRESSION model
+4. ELASTIC NET REGRESSION model
+
+*Violent Crime Models*
+
+We repeated the same steps as above using the Violent crimes per population as the response variable. Starting with Linear Regression
+
+*LINEAR REGRESSION MODEL*
+
+
+```{r, include=F}
+VC_Step_Model <- step(lm(ViolentCrimesPerPop~., VC_train))
+
+```
+
+```{r}
+summary(VC_Step_Model )
+```
+
+```{r}
+predicted <- predict(VC_Step_Model, newx = VC_test)# predict on test data
+predicted_values <- cbind (actual=VC_test$ViolentCrimesPerPop, predicted)  # combine
+
+```
+
+
+```{r}
+mean (apply(predicted_values, 1, min)/apply(predicted_values, 1, max))
+```
+
+```{r}
+calc_RMSE <- function(model){
+   RMSE <- sqrt(mean(model$residuals^2))
+   return(RMSE)
+}
+```
+
+
+```{r}
+df1<-data.frame(
+  RMSE = calc_RMSE(VC_Step_Model),
+  Rsquare = .6284)
+
+```
+
+
+
+
+Split the data again 
+
+```{r}
+#Split the data into Training and Test Set
+set.seed(123)
+train <- Communities_Crime_Train_Cleaned_Normalized$ViolentCrimesPerPop %>% 
+         createDataPartition(p=0.8, list = F)
+train_data <- Communities_Crime_Train_Cleaned_Normalized[train, ]
+test_data <- Communities_Crime_Train_Cleaned_Normalized[-train, ]
+```
+
+
+```{r}
+x <- model.matrix(ViolentCrimesPerPop ~.,train_data)[,-1]
+y <- train_data$ViolentCrimesPerPop
+
+```
+
+
+*RIDGE REGRESSION MODEL*
+
+```{r}
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+```
+
+
+
+```{r}
+cv <- cv.glmnet(x, y, alpha = 0, lambda = lambdas_to_try,
+                      standardize = TRUE, nfolds = 10)
+
+plot(cv)
+```
+
+
+
+```{r}
+#Find the best lambda using cross-validation
+set.seed(123)
+VC_Ridge_Model <- glmnet(x,y, alpha = 0, lambda = cv$lambda.min)
+coef(VC_Ridge_Model)
+
+```
+
+
+
+
+
+```{r}
+summary(VC_Ridge_Model)
+print(VC_Ridge_Model, digits = max(3, getOption("digits") - 3),
+           signif.stars = getOption("show.signif.stars"))
+```
+
+```{r}
+x.test <- model.matrix(ViolentCrimesPerPop ~., test_data)[,-1]
+predictions <- VC_Ridge_Model %>% predict(x.test) %>% as.vector()
+df2<- data.frame(
+  RMSE = RMSE(predictions, test_data$ViolentCrimesPerPop),
+  Rsquare = R2(predictions, test_data$ViolentCrimesPerPop))
+```
+
+*LASSO*
+
+
+```{r}
+set.seed(123)
+lambdas_to_try <- 10^seq(-3, 5, length.out = 100)
+```
+
+
+```{r}
+cv <- cv.glmnet(x, y, alpha = 1, lambda = lambdas_to_try,
+                      standardize = TRUE, nfolds = 10)
+
+plot(cv)
+```
+
+```{r}
+# Best cross-validated lambda
+lambda_cv <- cv$lambda.min
+VC_Lasso_Model <- glmnet(x,y, alpha=1, lambda = cv$lambda.min )
+coef(VC_Lasso_Model)
+
+```
+
+```{r}
+x.test <- model.matrix(ViolentCrimesPerPop ~., test_data)[,-1]
+predictions <- VC_Lasso_Model %>%  predict(x.test) %>% as.vector()
+df3<- data.frame(
+  RMSE = RMSE(predictions, test_data$ViolentCrimesPerPop),
+  Rsquare = R2(predictions, test_data$ViolentCrimesPerPop))
+```
+
+
+*ELASTIC NET REGRESSION*
+
+```{r}
+# Build the model using the training set
+set.seed(123)
+VC_ENR_model <- train(ViolentCrimesPerPop ~., test_data, method = "glmnet", trControl = trainControl("cv", number = 25), tuneLength = 25)
+# Best tuning parameter
+VC_ENR_model$bestTune
+```
+```{r}
+coef(VC_ENR_model$finalModel, VC_ENR_model$bestTune$lambda)
+```
+
+```{r}
+x.test <- model.matrix(ViolentCrimesPerPop ~., test_data)[,-1]
+predictions <- VC_ENR_model %>% predict(x.test)
+# Model performance metrics
+df4<- data.frame(
+  RMSE = RMSE(predictions, test_data$ViolentCrimesPerPop),
+  Rsquare = R2(predictions, test_data$ViolentCrimesPerPop)
+)
+```
+
+
+
+```{r}
+final <- rbind( df1,df2,df3,df4)
+rownames(final) <-(c("VC_Step_Model","VC_Ridge_Model","VC_Lasso_Model","VC_ENR_model"))
+#colnames(final) <- c("Model Name", "RMSE", "Rsquare")
+final <- as.data.frame(final)
+final <- cbind(Model= rownames(final), final)
+rownames(final) <- 1:nrow(final)
+
+final
+```
+
+```{r, echo=FALSE}
+knitr::kable(final,"markdown")
+```
+
+##  References
+\(^1\) UCI Machine Learning Repository. Center for Machine Learning and Intelligent Systems
+https://archive.ics.uci.edu/ml/datasets/Communities+and+Crime
+
+\(^2\) "USING MACHINE LEARNING ALGORITHMS TO ANALYZE CRIME DATA" by Lawrence McClendon and Natarajan Meghanathan (Jackson State University, 1400 Lynch St, Jackson, MS, USA) (Machine Learning and Applications: An International Journal (MLAIJ) Vol.2, No.1, March 2015 ) [Link](https://s3.amazonaws.com/academia.edu.documents/37598046/2115mlaij01.pdf?response-content-disposition=inline%3B%20filename%3DUSING_MACHINE_LEARNING_ALGORITHMS_TO_ANA.pdf&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIATUSBJ6BAHWGC4HP7%2F20200509%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20200509T192157Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjELr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIA3Nin7XCgTXQGundXNW2yPWbjn7JNbZs9T99XELR8AzAiEAvfFpUdQFvZ7YrCvfGdUMqcXLQh0rn9PIrnQJE7Avb0kqvQMI8%2F%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARAAGgwyNTAzMTg4MTEyMDAiDDk7guAnOE4F5up%2F6iqRA6WcVia4K2yIHIA9YsLEwizw349TeCmNJ53WgpYTcKCF3HGpxVmWeZ9EirdtKH7S7A1WK5LtLOM%2B9GZCLBplEDFGdM%2FcXfOsqnLuywuiY5GFufMZ1osTft5e6gdenni0c1u6D7mrrE5%2BYbdHdKBK3gl2QA%2BZPUvKVAse23aGTfe0AvzieJnCDYUmUGLYmtnwMhtKHmtjliD7NRW4iLYB0KrSm0s15IHanVPXY%2FsBJQDnRuiEtgtiflURIEy6QCngLstBgRbA%2Bir34HLH7XyjgyI72OrYb3EvyfJD9CvLWCpww5A8hG43RArrPoeWg0PwXGgJSZzTKcV7Sg9a4FHuBC%2B8NF7J%2FuBiTVT0UxIla24CE2ek2uEkHgKlzMOz0VEDPIDx9%2FDi7C4PX6sFOqj2esnBAOr4BXvcsNVNU1Y1WcAxW5rSYKES0IyTtQl2QIfkhQXd8YiJikj90Iz26HZB%2BDeftOZoVLlbsZwUQ1cHhibiBZ75%2BPFEe3PoF5Cz9i81XnT%2BApdoj59sR6qdx37d5M1dMJHT2%2FUFOusBdhZdH%2B5ZNCwXitw0pWS8c3SHZx7alHCU9szWP%2B1%2B9ywKj4XeT5hfri%2Bb8qBxhOzJP8K2IVg8mIb0QhOQaEIGX3SxaZzTVB2X84k2ToJdK%2BiFCx%2BSpxoDmpc%2BtfqrMYNvZs4DLhcG57qLM4GYl8IXKvor5w420EX31CVTYQDpsquC5ZWaNypd4c4I8aQy8cRyDVZuW1Q8MXqV7178%2B%2BQxjyyUtbwY%2B1BtjHzsTAPNtj34LKdcH%2BzJ4e05d16t%2FOG%2Bo0gc6YiQZCGkLkXZv%2FZdgl02PBE4t1NyP0X%2BdAGxpBNhBrYw4%2FgN43B8AQ%3D%3D&X-Amz-Signature=54344462f3989aad671b9689d2162f9cd00e6d9d425951572a1825356646475e)
+
+\(^3\) "A Convex Framework for Fair Regression" by Richard Berk, Hoda Heidari , Shahin Jabbari, Matthew Joseph, Michael Kearns , Jamie Morgenstern, Seth Neel , and Aaron Roth (Department of Statistics,  Department of Criminology, Department of Computer and Information Science of the University of Pennsylvania)(June 9, 2017)
+Citation: 	arXiv:1706.02409 [cs.LG] [Link](https://tinyurl.com/ya3qfxqg)
+
+\(^4\) "A Comparative Study to Evaluate Filtering Methods for Crime Data Feature Selection", Masila Abdul Jalil, Fatihah Mohd, and Noor Maizura Mohamad Noor (School of Informatics and Applied Mathematics, Universiti Malaysia Terengganu, 21030 Kuala Terengganu, Terengganu, Malaysia) (October 2017) [Link](https://reader.elsevier.com/reader/sd/pii/S1877050917320550?token=06FDD3562E4614109D18B2EFD508B5BA3C91AA5AE9E7907DC38F3E991BC1142F2AF578AC56BC97B2FEB1B6CDF0E15FE7)
+
+\(^5\) [Variance Inflation Factor](https://www.statisticshowto.com/variance-inflation-factor/)
+
+\(^6\) [Data Camp Tutorial](https://www.datacamp.com/community/tutorials/tutorial-ridge-lasso-elastic-net)
+
+
+
+
+
+

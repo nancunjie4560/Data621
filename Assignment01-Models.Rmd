@@ -1,0 +1,860 @@
+---
+title: "Assignment-1"
+author: Anil Akyildirim, John K. Hancock, John Suh, Emmanuel Hayble-Gomes, Chunjie
+  Nan
+date: "2/12/2020"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    code_download: yes
+    code_folding: hide
+    highlight: pygments
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+## Introduction
+
+In this assignment, we are tasked to explore, analyze and model a major league baseball dataset which contains around 2000 records where each record presents a baseball team from 1871 to 2006. Each observation provides the perforamce of the team for that particular year with all the statistics for the performance of 162 game season. The problem statement for the main objective is that "Can we predict the number of wins for the team with the given attributes of each record?". In order to provide a solution for the problem, our goal is to build a linear regression model on the training data that creates this prediction. 
+
+### About the Data
+
+The data set are provided in csv format as moneyball-evaluation-data and moneyball-training-data where we will explore, preperate and create our model with the training data and further test the model with the evaluation data. Below is short description of the variables within the datasets.
+
+**INDEX: Identification Variable(Do not use)
+
+**TARGET_WINS: Number of wins
+
+**TEAM_BATTING_H : Base Hits by batters (1B,2B,3B,HR)
+
+**TEAM_BATTING_2B: Doubles by batters (2B)
+
+**TEAM_BATTING_3B: Triples by batters (3B)
+
+**TEAM_BATTING_HR: Homeruns by batters (4B)
+
+**TEAM_BATTING_BB: Walks by batters
+
+**TEAM_BATTING_HBP: Batters hit by pitch (get a free base)
+
+**TEAM_BATTING_SO: Strikeouts by batters
+
+**TEAM_BASERUN_SB: Stolen bases
+
+**TEAM_BASERUN_CS: Caught stealing
+
+**TEAM_FIELDING_E: Errors
+
+**TEAM_FIELDING_DP: Double Plays
+
+**TEAM_PITCHING_BB: Walks allowed
+
+**TEAM_PITCHING_H: Hits allowed
+
+**TEAM_PITCHING_HR: Homeruns allowed
+
+**TEAM_PITCHING_SO: Strikeouts by pitchers
+
+## Data Exploration
+
+### Descriptive Statistics
+
+```{r}
+# load libraries
+library(ggplot2)
+library(ggcorrplot)
+library(psych)
+#library(statsr)
+library(dplyr)
+library(PerformanceAnalytics)
+library(tidyr)
+library(reshape2)
+library(rcompanion)
+library(caret)
+library(MASS)
+library(imputeTS)
+library(rsample)
+library(huxtable)
+library(glmnet)
+library(sjPlot)
+library(modelr)
+```
+
+```{r}
+# Load data sets
+
+baseball_eva <- read.csv("https://raw.githubusercontent.com/anilak1978/data621/master/moneyball-evaluation-data.csv")
+baseball_train <- read.csv("https://raw.githubusercontent.com/anilak1978/data621/master/moneyball-training-data.csv")
+
+```
+
+
+We can start exploring our training data set by looking at basic descriptive statistics. 
+
+```{r}
+# look at training dataset structure
+str(baseball_train)
+TARGET_Wins<-as.numeric(baseball_train$TARGET_WINS)
+
+```
+
+We have 2276 observations and 17 variables. All of our variables are integer type as expected.
+
+```{r}
+# look at descriptive statistics
+metastats <- data.frame(describe(baseball_train))
+metastats <- tibble::rownames_to_column(metastats, "STATS")
+metastats["pct_missing"] <- round(metastats["n"]/2276, 3)
+head(metastats)
+
+```
+
+With the descriptive statistics, we are able to see mean, standard deviation, median, min, max values and percentage of each missing value of each variable. For example, when we look at TEAM_BATTING_H, we see that average 1469 Base hits by batters, with standard deviation of 144, median of 1454 with maximum base hits of 2554. 
+
+
+```{r}
+# Look for missing values
+colSums(is.na(baseball_train))
+
+```
+
+```{r}
+# Percentage of missing values
+missing_values <- metastats %>%
+  filter(pct_missing < 1) %>%
+  dplyr::select(STATS, pct_missing) %>%
+  arrange(pct_missing)
+missing_values
+
+```
+
+When we look at the missing values within the training data set, we see that proportionaly against the total observations, TEAM_BATTING_HBP and TEAM_BESARUN_CS variables have the most missing values. We will be handling these missing values in our Data Preperation section. 
+
+### Correlation and Distribution
+
+```{r fig1, fig.height=10, fig.width= 15, fig.align='center'}
+# Look at correlation between variables
+baseball_train$TARGET_WINS<-as.numeric(baseball_train$TARGET_WINS)
+corr <- round(cor(baseball_train), 1)
+
+ggcorrplot(corr,
+           type="lower",
+           lab=TRUE,
+           lab_size=3,
+           method="circle",
+           colors=c("tomato2", "white", "springgreen3"),
+           title="Correlation of variables in Training Data Set",
+           ggtheme=theme_bw)
+
+```
+
+Team_Batting_H and Team_Batting_2B have the strongest positive correlation with Target_Wins. We also see that, there is a strong correlation between Team_Batting_H and Team_Batting_2B, Team_Pitching_B and TEAM_FIELDING_E. We will consider these findings on model creation as collinearity might complicate model estimation and we want to have explanotry variables to be independent from each other. We will try to avoid adding explanotry variables that are correlated to each other.
+
+Let's look at the correlations and distribution of the variables in more detail. 
+
+```{r}
+
+# Look at correlation from batting, baserunning, pitching and fielding perspective
+Batting_df <- baseball_train[c(2:7, 10)] 
+BaseRunning_df <- baseball_train[c(8:9)] 
+Pitching_df <- baseball_train[c(11:14)] 
+Fielding_df <- baseball_train[c(15:16)]
+
+```
+
+#### Batting
+
+```{r fig2, fig.height=10, fig.width= 15, fig.align='center'}
+# Batting Correlations
+chart.Correlation(Batting_df, histogram=TRUE, pch=19)
+
+```
+
+We can see that our response variable TARGET_WINS, TEAM_BATTING_H, TEAM_BATTING_2B, TEAM_BATTING_BB and TEAM_BASERUN_CS are normaly distributed. TEAM_BATTING_HR on the other hand is bimodal. 
+
+#### Baserunning
+
+
+```{r fig3, fig.height=10, fig.width= 15, fig.align='center'}
+# baserunning Correlation
+
+chart.Correlation(BaseRunning_df, histogram=TRUE, pch=19)
+
+```
+
+TEAM_BASERUN_SB is right skewed and TEAM_BATTING_SO is bimodal. 
+
+#### Pitching
+
+```{r fig4, fig.height=10, fig.width= 15, fig.align='center'}
+#pitching correlations
+chart.Correlation(Pitching_df, histogram=TRUE, pch=19)
+
+```
+
+TEAM_BATTING_HBP seems to be normally distributed however we shouldnt forget that we have a lot of missing values in this variable. 
+
+```{r fig5, fig.height=10, fig.width= 15, fig.align='center'}
+# fielding correlations
+chart.Correlation(Fielding_df, histogram=TRUE, pch=19)
+```
+
+
+Let's also look at the outliers and skewness for each varibale. 
+
+### Outliers and Skewness
+
+```{r fig6, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow=c(3,3))
+datasub_1 <- melt(baseball_train)
+suppressWarnings(ggplot(datasub_1, aes(x= "value", y=value)) + 
+                   geom_boxplot(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+Based on the boxplot we created, TEAM_FIELDING_DP, TEAM_PITCHING_HR, TEAM_BATTING_HR and TEAM_BATTING_SO seem to have the least amount of outliers. 
+
+```{r fig7, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(baseball_train) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+```
+
+```{r}
+
+metastats %>%
+  filter(skew > 1) %>%
+  dplyr::select(STATS, skew) %>%
+  arrange(desc(skew))
+```
+
+We can see that the most skewed variable is TEAM_PITCHING_SO. We will correct the skewed variables in our data preperation section. 
+
+
+When we are creating a linear regression model, we are looking for the fitting line with the least sum of squares, that has the small residuals with minimized squared residuals. From our correlation analysis, we can see that the explatory variable that has the strongest correlation with TARGET_WINS is TEAM_BATTING_H. Let's look at a simple model example to further expand our explaroty analysis. 
+
+### Simple Model Example
+
+```{r fig8, fig.height=5, fig.width= 15, fig.align='center'}
+#library(statsr)
+# line that follows the best assocation between two variables
+
+#plot_ss(x = TEAM_BATTING_H, y = TARGET_WINS, data=baseball_train, showSquares = TRUE, leastSquares = TRUE)
+
+```
+
+When we are exploring to build a linear regression, one of the first thing we do is to create a scatter plot of the response and explanatory variable. 
+
+```{r fig9, fig.height=5, fig.width= 15, fig.align='center'}
+# scatter plot between TEAM_BATTING_H and TARGET_WINS
+
+ggplot(baseball_train, aes(x=TEAM_BATTING_H, y=TARGET_WINS))+
+  geom_point()
+
+```
+
+One of the conditions for least square lines or linear regression are Linearity. From the scatter plot between TEAM_BATTING_H and TARGET_WINS, we can see this condition is met. We can also create a scatterplot that shows the data points between TARGET_WINS and each variable.
+
+```{r fig10, fig.height=5, fig.width= 15, fig.align='center'}
+
+baseball_train %>%
+  gather(var, val, -TARGET_WINS) %>%
+  ggplot(., aes(val, TARGET_WINS))+
+  geom_point()+
+  facet_wrap(~var, scales="free", ncol=4)
+
+```
+
+As we displayed earlier, hits walks and home runs have the strongest correlations with TARGET_WINS and also meets the linearity condition. 
+
+```{r}
+# create a simple example model
+lm_sm <- lm(baseball_train$TARGET_WINS ~ baseball_train$TEAM_BATTING_H)
+summary(lm_sm)
+
+```
+
+TARET_BATTING_H has the strongest correlation with TARGET_WINS response variable, however when we create a simple model just using TARGET_BATTING_H, we can only explain 15% of the variablity. (Adjusted R-squared:  0.1508). The remainder of the varibility can be explained with selected other variables within the training dataset. 
+
+```{r fig11, fig.height=5, fig.width= 15, fig.align='center'}
+#histogram of residuals for the simple model
+hist(lm_sm$residuals)
+
+```
+
+```{r fig12, fig.height=5, fig.width= 15, fig.align='center'}
+# check for constant variability (honoscedasticity)
+
+plot(lm_sm$residuals ~ baseball_train$TEAM_BATTING_H)
+
+```
+
+We do see that the residuals are distributed normally and variability around the regression line is roughly constant. 
+
+Based on our explatory analysis, we were able to see the correlation level between the possible explanatory variables and repsonse variable TARGET_WINS. Some of the variables such as TARGET_BATTING_H has somewhat strong positive correlation, however some of the variables such as TEAM_PITCHING_BB has weak positive relationship with TARGET_WINS. We also found out, hit by the pitcher(TEAM_BATTING_HBP) and caught stealing (TEAM_BASERUN_CS) variables are missing majority of the values. Skewness and distribution analysis gave us the insights that we have some variables that are right-tailed. Considering all of these insights, we will handle missing values, correct skewness and outliers and select our explaratory variables based on correlation in order to create our regression model. 
+
+## Data Preparation
+
+
+### Objective
+
+In this section, we will prepare the dataset for linear regression modeling.  We accomplish this by handling missing values and outliers and by tranforming the data into more normal distributions.  This section covers:
+
+*Identify and Handle Missing Data
+*Correct Outliers
+*Adjust Skewed value - Box Cox Transformation
+
+
+First, we will start by copying the dataset into a new variable, baseball_train_01, and we will remove the Index variable from the new dataset as well. We will now have 16 variables.
+
+```{r}
+baseball_train_01 <- baseball_train
+
+baseball_train_01 <-subset(baseball_train_01, select = -c(INDEX))
+
+```
+
+
+### Identify and Handle Missing Data
+
+#### Removal of Sparsely Populated Variables - MCAR
+
+In the Data Exploration section, we identified these variables as having missing data values.The table below lists the variables with missing data. The variable, TEAM_BATTING_HBP, is sparsely populated.  Since this data is Missing Completely at Random (MCAR) and is not related to any other variable, it is safe to completely remove the variable from the dataset. 
+
+
+```{r}
+missing_values
+```
+
+```{r}
+baseball_train_01 <-subset(baseball_train_01, select = -c(TEAM_BATTING_HBP))
+
+```
+
+There are now 15 variables.
+
+
+```{r}
+dim(baseball_train_01)
+```
+
+#### Imputation of Missing Values
+For the remaining variables with missing values, we will impute the mean of the variable. The function, "na_mean" updates all missing values with the mean of the variable.
+
+```{r, message=FALSE}
+baseball_train_01 <- na_mean(baseball_train_01, option = "mean")  
+
+```
+
+Re-running the metastats dataframe on the new baseball_train_01 dataset shows that there are no missing values.
+
+```{r, message=FALSE}
+# look at descriptive statistics
+metastats <- data.frame(describe(baseball_train_01))
+metastats <- tibble::rownames_to_column(metastats, "STATS")
+metastats["pct_missing"] <- round(metastats["n"]/2276, 3)
+
+```
+
+
+```{r}
+# Percentage of missing values
+missing_values2 <- metastats %>%
+  filter(pct_missing < 1) %>%
+  dplyr::select(STATS, pct_missing) %>%
+  arrange(pct_missing)
+missing_values2
+```
+
+### Correct Outliers
+
+In this section, we created two functions that can identify outliers. The funcion, Identify_Outlier, uses the Turkey method, where outliers are identified by being below Q1-1.5*IQR and above Q3+1.5*IQR. The second function, tag_outlier, returns a binary list of values, "Acceptable" or "Outlier" that will be added to the dataframe.
+
+
+```{r}
+Identify_Outlier <- function(value){
+
+    interquartile_range = IQR(sort(value),na.rm = TRUE)
+    q1 = matrix(c(quantile(sort(value),na.rm = TRUE)))[2]
+    q3 = matrix(c(quantile(sort(value),na.rm = TRUE)))[4]
+    lower = q1-(1.5*interquartile_range)
+    upper = q3+(1.5*interquartile_range)
+    
+    bound <- c(lower, upper)
+    
+    return (bound)
+}
+
+```
+
+
+```{r}
+tag_outlier <- function(value) {
+    
+   boundaries <- Identify_Outlier(value)
+   tags <- c()
+   counter = 1
+    for (i in as.numeric(value))
+    {
+
+        if (i >= boundaries[1] & i <= boundaries[2]){
+          tags[counter] <- "Acceptable"
+        } else{
+          tags[counter] <- "Outlier"
+        }
+      
+      counter = counter +1
+    }
+   
+   return (tags)
+}
+```
+
+As seen in the box plots from the previous section, "TEAM_BASERUN_SB", "TEAM_BASERUN_CS", "TEAM_PITCHING_H", "TEAM_PITCHING_BB", "TEAM_PITCHING_SO", and "TEAM_FIELDING_E" all have a high number of outliers. We will use the two functions above to tag those rows with extreme outliers.
+
+
+```{r}
+tags<- tag_outlier(baseball_train_01$TEAM_BASERUN_SB)
+baseball_train_01$TEAM_BASERUN_SB_Outlier <- tags
+
+tags<- tag_outlier(baseball_train_01$TEAM_BASERUN_CS)
+baseball_train_01$TEAM_BASERUN_CS_Outlier <- tags
+
+tags<- tag_outlier(baseball_train_01$TEAM_PITCHING_H)
+baseball_train_01$TEAM_PITCHING_H_Outlier <- tags
+
+tags<- tag_outlier(baseball_train_01$TEAM_PITCHING_BB)
+baseball_train_01$TEAM_PITCHING_BB_Outlier <- tags
+
+tags<- tag_outlier(baseball_train_01$TEAM_PITCHING_SO)
+baseball_train_01$TEAM_PITCHING_SO_Outlier <- tags
+
+tags<- tag_outlier(baseball_train_01$TEAM_FIELDING_E)
+baseball_train_01$TEAM_FIELDING_E_Outlier <- tags
+```
+
+Below, we filtered out all of the outliers and created a new dataframe, baseball_train_02
+
+
+```{r, message=FALSE, options(warn=-1)}
+baseball_train_02 <- baseball_train_01 %>%
+                filter(
+                        TEAM_BASERUN_SB_Outlier != "Outlier" &
+                        TEAM_BASERUN_CS_Outlier != "Outlier" &
+                        TEAM_PITCHING_H_Outlier != "Outlier" &
+                        TEAM_PITCHING_BB_Outlier != "Outlier" &
+                        TEAM_PITCHING_SO_Outlier != "Outlier" &
+                        TEAM_FIELDING_E_Outlier != "Outlier"
+                )
+```
+
+
+Re-running the boxplots show data that has a better normal distribution except for the variable, TEAM_FIELDING_E which is still skewed.  We will handle this next.
+
+
+```{r fig13, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow=c(3,3))
+datasub_1 <- melt(baseball_train_02)
+suppressWarnings(ggplot(datasub_1, aes(x= "value", y=value)) + 
+                   geom_boxplot(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+
+
+```
+
+### Adjust Skewed values
+#### Box Cox Transformation
+
+Removing the outliers tranformed each variable to a closer to a normal distribution and checking the skewness of the variables confirm this with the exception of TEAM_FIELDING_E. This variable is still skewed and not normal.  In this section, we will use the Box Cox tranformation from the MASS library to normalize this variable.
+
+
+```{r}
+metastats_02 <- data.frame(describe(baseball_train_02))
+metastats_02 <- tibble::rownames_to_column(metastats_02, "STATS") 
+ 
+metastats_02 %>%
+ filter(skew > 1 | skew < -1) %>%
+  dplyr::select(STATS, skew) %>%
+  arrange(desc(skew))
+
+```
+
+Looking at the histogram and QQ plots we can confirm that the variable, TEAM_FIELDING_E, is not normally distributed. It is skewed to the right.
+
+```{r, message=FALSE}
+plotNormalHistogram(baseball_train_02$TEAM_FIELDING_E)
+```
+
+
+```{r}
+qqnorm(baseball_train_02$TEAM_FIELDING_E,
+       ylab="Sample Quantiles for TEAM_FIELDING_E")    
+         qqline(baseball_train_02$TEAM_FIELDING_E,
+           col="blue")
+```
+
+
+The following Box Cox transformation section is based on the tutorial at the link below:
+
+[\hrefhttps://rcompanion.org/handbook/I_12.html][Summary and Analysis of Extension Program Evaluation in R]
+
+The Box Cox procedure uses a log-likelihood to find the lambda to use to transform a variable to a normal distribution. 
+
+
+```{r, message=FALSE}
+
+TEAM_FIELDING_E <- as.numeric(dplyr::pull(baseball_train_02, TEAM_FIELDING_E))
+
+#Transforms TEAM_FIELDING_E as a single vector 
+Box = boxcox(TEAM_FIELDING_E ~ 1, lambda = seq(-6,6,0.1))
+
+#Creates a dataframe with results
+Cox = data.frame(Box$x, Box$y)
+
+# Order the new data frame by decreasing y to find the best lambda.Displays the lambda with the greatest log likelihood.
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),]
+Cox2[1,] 
+
+#Extract that lambda and Transform the data
+lambda = Cox2[1, "Box.x"]
+T_box = (TEAM_FIELDING_E ^ lambda - 1)/lambda
+```
+
+We can now see that TEAM_FIELDING_E has a normal distribution.
+
+
+```{r}
+plotNormalHistogram(T_box)
+```
+
+
+```{r}
+qqnorm(T_box, ylab="Sample Quantiles for TEAM_FIELDING_E")
+qqline(T_box,
+        col="blue")
+```
+
+
+```{r}
+baseball_train_02$TEAM_FIELDING_E <- T_box
+```
+
+The density plots below show that all of the variables for the dataset baseball_train_02 are now normally distributed.  In the next section, we will use this dataset to build the models and discuss the coefficients of the models. 
+
+
+```{r , message=FALSE, fig15, fig.height=10, fig.width= 15, fig.align='center'}
+par(mfrow = c(3, 3))
+datasub = melt(baseball_train_02) 
+suppressWarnings(ggplot(datasub, aes(x= value)) + 
+                   geom_density(fill='lightblue') + facet_wrap(~variable, scales = 'free') )
+
+
+```
+
+Viewing the dataframe shows that the dataset contains characters resulting from the transfromation of the outliers. These non numeric characters will impact our models especially if we build the intial baseline model with all the variables. We will need one more step to have our data ready for the models.
+
+```{r}
+str(baseball_train_02)
+```
+Subsetting - The code below will subset the data to have only numeric or integer values that will be used for our models. This will create baseball_train_03 dataframe.
+
+```{r}
+baseball_train_03 <- baseball_train_02[c(1:15) ]
+str(baseball_train_03)
+```
+
+## Build Models 
+
+The first Model is using stepwise in Backward direction to eliminate variables, this is an automated process which is different from the manual variable selction process. We will not pay much attention to this process as the focus of the project is to manually identify and select those significant variables that will predict TARGET WINS. 
+```{r}
+Model <- step(lm(TARGET_WINS ~ ., data=baseball_train_03), direction = "backward")
+summary(Model)
+```
+The step backward variable selection process identified eleven significant variables with an R-squared of 37%, Residual Error of 11.01 and F-Statistic of 74.59. Notice that some of the coefficients are negative which means these Team will most likely result in negative wins. We will explore these coefficient a little further in this analysis.
+
+### OLS- MODEL 1 
+
+Using all the 15 Variables
+
+```{r}
+Model1 <-lm(TARGET_WINS ~ ., data=baseball_train_03)
+summary(Model1)
+```
+This Model identified seven significant variables at \apha = 0.05 with an R-squared of 37%, Residual Error of 11.01 and F-Statistic of 64.01. Although the F-Statistic reduced, this model does not improve significantly from the previous model. 
+
+```{r}
+Metrics1 <- data.frame(
+  R2 = rsquare(Model1, data = baseball_train_03),
+  RMSE = rmse(Model1, data = baseball_train_03),
+  MAE = mae(Model1, data = baseball_train_03)
+)
+print(Metrics1)
+```
+
+### OLS- MODEL 2 
+
+Using all the seven (7) significant variables from Model 1 
+
+```{r}
+Model2 <- lm(TARGET_WINS~TEAM_FIELDING_E + TEAM_BASERUN_SB + TEAM_BATTING_3B + TEAM_FIELDING_DP + TEAM_PITCHING_SO + TEAM_BATTING_SO + TEAM_BATTING_2B,data=baseball_train_03)
+summary(Model2)
+```
+This Model identified five significant variables at \apha = 0.05 with an R-squared of 22%, Residual Error of 12.19 and F-Statistic of 64.14. The R-Squared decreased and the Error increased slightly. 
+
+```{r}
+Metrics2 <- data.frame(
+  R2 = rsquare(Model2, data = baseball_train_03),
+  RMSE = rmse(Model2, data = baseball_train_03),
+  MAE = mae(Model2, data = baseball_train_03)
+)
+print(Metrics2)
+```
+
+### OLS- MODEL 3
+
+All offensive categories which include hitting and base running
+
+```{r}
+Model3 <-lm(TARGET_WINS~TEAM_BATTING_H + TEAM_BATTING_BB + TEAM_BATTING_HR + TEAM_BATTING_2B + TEAM_BATTING_SO + TEAM_BASERUN_CS + TEAM_BATTING_3B + TEAM_BASERUN_SB,data=baseball_train_03)
+summary(Model3)
+```
+This Model identified five significant variables at \apha = 0.05 with an R-squared of 28%, Residual Error of 11.73 and F-Statistic of 75.58. Although the R-squared is not that great, the standard errors are more reasonable. We will hold onto this Model as performing better than the previous models for now.
+
+```{r}
+Metrics3 <- data.frame(
+  R2 = rsquare(Model3, data = baseball_train_03),
+  RMSE = rmse(Model3, data = baseball_train_03),
+  MAE = mae(Model3, data = baseball_train_03)
+)
+print(Metrics3)
+```
+
+### OLS- MODEL 4
+
+All defensive categories which include fielding and pitching
+
+```{r}
+Model4 <- lm(TARGET_WINS~TEAM_PITCHING_H + TEAM_PITCHING_BB + TEAM_PITCHING_HR + TEAM_PITCHING_SO + TEAM_FIELDING_E,data=baseball_train_03)
+summary(Model4)
+```
+This Model identified five significant variables at \apha = 0.05 with an R-squared of 19%, Residual Error of 12.46 and F-Statistic of 75.56.There is no significant improvement with this model.
+
+```{r}
+Metrics4 <- data.frame(
+  R2 = rsquare(Model4, data = baseball_train_03),
+  RMSE = rmse(Model4, data = baseball_train_03),
+  MAE = mae(Model4, data = baseball_train_03)
+)
+print(Metrics4)
+```
+
+### OLS- MODEL 5
+
+Using only the significant variables from Model 3
+
+```{r}
+Model5 <- lm(TARGET_WINS~TEAM_PITCHING_H + TEAM_PITCHING_BB + TEAM_PITCHING_HR + TEAM_PITCHING_SO + TEAM_BATTING_3B + TEAM_BASERUN_SB,data=baseball_train_03)
+summary(Model5)
+```
+This Model identified five significant variables at \apha = 0.05 with an R-squared of 26%, Residual Error of 11.93 and F-Statistic of 88.92. Although the R-squared is not better than than Model3, the F-statistic improved with smaller Standard Error. 
+
+```{r}
+Metrics5 <- data.frame(
+  R2 = rsquare(Model5, data = baseball_train_03),
+  RMSE = rmse(Model5, data = baseball_train_03),
+  MAE = mae(Model5, data = baseball_train_03)
+)
+print(Metrics5)
+```
+
+### Compare OLS Model Quality 
+
+```{r}
+anova(Model, Model1, Model2, Model3, Model4, Model5)
+tab_model(Model, Model1, Model2, Model3, Model4, Model5)
+
+```
+
+
+### RIDGE Regression- MODEL 6 
+
+The Ridge regression is an extension of linear regression where the loss function is modified to minimize the complexity of the model. This modification is done by adding a penalty parameter that is equivalent to the square of the magnitude of the coefficients.
+
+Before implementing the RIDGE model, we will split the training dataset into 2 parts that is - training set within the training set and a test set that can be used for evaluation. By enforcing stratified sampling both our training and testing sets have approximately equal response "TARGET_WINS" distributions.
+
+Transforming the variables into the form of a matrix will enable us to penalize the model using the 'glmnet' method in glmnet package.
+
+```{r}
+#Split the data into Training and Test Set
+baseball_train_set<- initial_split(baseball_train_03, prop = 0.7, strata = "TARGET_WINS")
+train_baseball  <- training(baseball_train_set)
+test_baseball   <- testing(baseball_train_set)
+
+train_Ind<- as.matrix(train_baseball)
+train_Dep<- as.matrix(train_baseball$TARGET_WINS)
+
+test_Ind<- as.matrix(test_baseball)
+test_Dep<- as.matrix(test_baseball$TARGET_WINS)
+
+```
+
+For the avoidance of multicollinearity, avoiding overfitting and predicting better, implementing RIDGE regression will become useful. 
+
+```{r}
+lambdas <- 10^seq(2, -3, by = -.1)
+Model6 <- glmnet(train_Ind,train_Dep, nlambda = 25, alpha = 0, family = 'gaussian', lambda = lambdas)
+summary(Model6)
+print(Model6, digits = max(3, getOption("digits") - 3),
+           signif.stars = getOption("show.signif.stars"))
+```
+
+The significant difference between the OLS and the Ridge Regresion is the hyperparameter tuning using lambda. The Ridge regression does not perform Feature Selection, but it predicts better and solve overfitting. Cross Validating the Ridge Regression will help us to identify the optimal lambda to penalize the model and enhance the predictability.
+
+```{r}
+CrossVal_ridge <- cv.glmnet(train_Ind,train_Dep, alpha = 0, lambda = lambdas)
+optimal_lambda <- CrossVal_ridge$lambda.min
+optimal_lambda #The optimal lambda is 0.001 which we will use to penelize the Ridge Regression model.
+coef(CrossVal_ridge) # Shows the coefficients
+plot(CrossVal_ridge)
+```
+
+The plot shows that the errors increases as the magnitude of lambda increases, previously, we identified that the optimal lambda is 0.001 which is very obvious from the plot above. The coefficients are restricted to be small but not quite zero as Ridge Regression does not force the coefficient to zero. This indicates that the model is performing well so far. But let's make it better using the optimal labmda.
+
+```{r}
+eval_results <- function(true, predicted, df){
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+data.frame(   
+  RMSE = RMSE,
+  Rsquare = R_square
+)
+  
+}
+# Prediction and evaluation on train data
+predictions_train <- predict(Model6, s = optimal_lambda, newx = train_Ind)
+eval_results(train_Dep, predictions_train, train_baseball)
+```
+We should be a little concern about the 100% R-squared performance for this Model. Although the Ridge Regression forces the coefficients towards zero to improve the Model performance and enhance the predictability, the very high peformance may require further investigation. Lets improve the model using a more reason lambda because optimal might not always be the best.
+
+### The Improved Ridge Regression
+
+```{r}
+Model6_Improved <- glmnet(train_Ind,train_Dep, nlambda = 25, alpha = 0, family = 'gaussian', lambda = 6.310)
+summary(Model6_Improved)
+coef(Model6_Improved)
+
+```
+
+Let's compute the Model's Performance Metric to see how this model is doing.
+
+```{r}
+eval_results <- function(true, predicted, df){
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/nrow(df))
+data.frame(   
+  RMSE = RMSE,
+  Rsquare = R_square
+)
+  
+}
+
+# Prediction and evaluation on train data
+predictions_train <- predict(Model6_Improved, s = lambda, newx = train_Ind)
+eval_results(train_Dep, predictions_train, train_baseball)
+
+# Prediction and evaluation on test data
+predictions_test <- predict(Model6_Improved, s = lambda, newx = test_Ind)
+eval_results(test_Dep, predictions_test, test_baseball)
+```
+The improved Model6 output shows that the RMSE and R-squared values for the Ridge Regression model on the training and test data are significantly improved. The Loss Function (RMSE) are severely reduced compared to the OLS models which indicates that the Ridge Regression is not overfitting. These performance is significantly improved compared to the OLS Models 1 to 5.
+
+### Model Performance Comparison
+        
+```{r}
+ModelName <- c("Model", "Model1","Model2","Model3","Model4","Model5","Model6")
+Model_RSquared <- c("37%", "37%", "22%", "28%", "19%", "26% ", "90%")
+Model_RMSE <- c("11.01", "10.96", "12.15", "11.69", "12.43", "11.93 ", "4.33")
+Model_FStatistic <- c("74.59", "64.01", "64.14", "75.58", "72.56", "88.92 ", "NA")
+Model_Performance <- data.frame(ModelName,Model_RSquared,Model_RMSE,Model_FStatistic)
+Model_Performance
+
+```
+
+### Model Prediction
+
+Based on the Model metrics above, we're ready to make prediction and we will select our acceptable OLS Model3 and Model5 which has better F-Statistic, smaller standard errors and less negative coefficient as our best OLS models. We will also compare the prediction accuracy of these models to that of the improved Ridge Regression Model which is our champion Model for this exercise based on the very small RMSE and the highest R-squared of over 90%.
+
+```{r}
+predicted <- predict(Model3, newx = test_baseball)# predict on test data
+predicted_values <- cbind (actual=test_baseball$TARGET_WINS, predicted)  # combine
+predicted_values
+```
+
+```{r}
+mean (apply(predicted_values, 1, min)/apply(predicted_values, 1, max)) # calculate accuracy
+```
+The prediction accuracy here is at 85.85%
+
+```{r}
+predicted <- predict(Model5, newx = test_baseball)# predict on test data
+predicted_values <- cbind (actual=test_baseball$TARGET_WINS, predicted)  # combine
+predicted_values
+```
+
+```{r}
+mean (apply(predicted_values, 1, min)/apply(predicted_values, 1, max)) # calculate accuracy
+```
+
+The prediction accuracy for the OLS Model5 is at 85.94% which is not bad for this purpose. But lets compare it to the Champion Model- The improved Ridge Regression.
+
+```{r}
+predicted <- predict(Model6_Improved, newx = test_Ind)# predict on test data
+predicted_values <- cbind (actual=test_baseball$TARGET_WINS, predicted)  # combine
+predicted_values
+
+```
+ Lets calculate the accuracy of using Model6 for our predictions
+
+```{r}
+mean (apply(predicted_values, 1, min)/apply(predicted_values, 1, max)) # calculate accuracy
+```
+The prediction accuracy of the improved Ridge Regression Model is 95.75%.
+
+```{r}
+ModelName <- c("Model3", "Model5","Model6")
+Model_Accuracy <- c("85.85%", "85.85%", "95.75%")
+AccuracyCompared <- data.frame(ModelName,Model_Accuracy)
+AccuracyCompared
+```
+
+The prediction accuracy of the improved Ridge Regression Model6 is at 95.75% which is very good for this purpose.
+
+## Conclusion
+
+The improved Model6 shows significant improvement from all the OLS Models when the R-Squared and the RMSE of the Models are compared. THis Model also predict TARGET WINS better than the OLS models because it is more stable and less prone to overfitting. 
+
+The chosen OLS Model3 and Model5 are due to the improved F-Statistic, positive variable coefficients and low Standard Errors. We will chose to make our predictions with the champion model the improved Ridge Regression Model6 because it beats all the OLs models when the model performance metrics are compared as well as the predictive ability of this model. 
+
+For Models 3 and 4, the variables were chosen just to test how the offfensive categories only would affect the model and how only defensive variables would affect the model. Based on the Coefficients for each model, the third model took the highest coefficient from each category model.
+
+For offense, the two highest were HR and Triples. Which intuively does make sense because the HR and triple are two of the highest objectives a hitter can achieve when batting and thus the higher the totals in those categories the higher the runs scored which help a team win. And on the defensive side, the two highest cooeficients were Hits and WALKS. Which again just looking at it from a common sense point does make sense because as a pitcher, what they want to do is limit the numbers of times a batter gets on base whether by a hit or walk. Unless its an error, if a batter does not get a hit or walk then the outcome would be an out which would in essence limit the amount of runs scored by the opposing team.
+
+
+
+
+
+
+
+
+
+
+
+

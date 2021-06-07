@@ -1,0 +1,332 @@
+---
+title: "Assignment-1"
+author: Anil Akyildirim, John K. Hancock, John Suh, Emmanuel Hayble-Gomes, Chunjie Nan
+date: "04/05/2020"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    code_download: yes
+    code_folding: hide
+    highlight: pygments
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+---
+
+## Introduction
+
+In this assignment, we are tasked to explore, analyze and model a data set containing information on crime for various neighborhoods of a major city. Each record has a response variable indicating whether or not the crime rate is above the median crime rate (1) or not (0). The objective is to build a binary logistic regression model on the training data set to predict whether the neighborhood will be at risk for high crime levels. The expectation is to provide classifications and probabilities for the evaluation data set using the binary logistic regression model.
+
+### About the Data
+
+The data set are provided in csv format as crime-evaluation-data and crime-training-data where we will explore, prepare and create our Binary Logistic Regression models with the training data using the variables given below:
+
+zn: proportion of residential land zoned for large lots (over 25000 square feet) (predictor variable)
+indus: proportion of non-retail business acres per suburb (predictor variable)
+chas: a dummy var. for whether the suburb borders the Charles River (1) or not (0) (predictor variable)
+nox: nitrogen oxides concentration (parts per 10 million) (predictor variable)
+rm: average number of rooms per dwelling (predictor variable)
+age: proportion of owner-occupied units built prior to 1940 (predictor variable)
+dis: weighted mean of distances to five Boston employment centers (predictor variable)
+rad: index of accessibility to radial highways (predictor variable)
+tax: full-value property-tax rate per $10,000 (predictor variable)
+ptratio: pupil-teacher ratio by town (predictor variable)
+black: 1000(Bk - 0.63)2 where Bk is the proportion of blacks by town (predictor variable)
+lstat: lower status of the population (percent) (predictor variable)
+medv: median value of owner-occupied homes in $1000s (predictor variable)
+target: whether the crime rate is above the median crime rate (1) or not (0) (response variable).
+
+## Load Libraries
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(ggcorrplot)
+library(corrplot)
+library(psych)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(MASS)
+library(pROC)
+library(glmnet)
+library(mltest)
+```
+
+## Load the training and evaluation data sets
+I will use the training data to train the model and use the evaluation data set to test/evaluate the model.
+```{r}
+crime <- read.csv("https://raw.githubusercontent.com/Emahayz/Data-621/master/crime-training-data_modified.csv", header=T, sep = ",")
+
+crime_evaluation <- read.csv("https://raw.githubusercontent.com/Emahayz/Data-621/master/crime-evaluation-data_modified.csv", header=T, sep = ",")
+
+```
+
+## Data Exploration
+
+### Descriptive Statistics
+
+We can start exploring our training data set by looking at basic descriptive statistics. 
+Look at the training dataset structure
+```{r}
+str(crime)
+```
+The training data set has 466 observations with 13 variables. All the variables are numeric/integer.
+Look at the evaluation dataset structure
+```{r}
+str(crime_evaluation)
+```
+The evaluation data set has 40 observations with 12 variables; all the bariables are numerical/integers.
+
+Look at descriptive statistics for both datasets
+```{r}
+summary(crime)
+
+```
+
+```{r}
+summary(crime_evaluation)
+```
+
+With the descriptive statistics, we are able to see mean, standard deviation, median, min, max values. 
+
+Looking for missing values
+```{r}
+colSums(is.na(crime))
+colSums(is.na(crime_evaluation))
+
+```
+
+The data set shows no missing values for these data sets. 
+
+Let's look at some interesting part of the data by exploring the Age and Property Tax variables
+```{r}
+mean = mean(crime$age)
+  sd = sd(crime$age)
+
+hist(crime$age, probability = TRUE)
+x <- 0:146
+y <- dnorm(x = x, mean = mean, sd = sd)
+lines(x = x, y = y, col = "blue") #The distribution doesn't looks normal!
+```
+
+```{r}
+mean = mean(crime$tax)
+  sd = sd(crime$tax)
+
+hist(crime$tax, probability = TRUE)
+x <- 0:146
+y <- dnorm(x = x, mean = mean, sd = sd)
+lines(x = x, y = y, col = "blue") # Doesn't looks good here too!
+```
+
+### Correlation and Distribution
+
+The approach below gives the following  correlation for these variables
+
+```{r fig1, fig.height=10, fig.width= 15, fig.align='center'}
+# Look at correlation between variables
+
+corr <- round(cor(crime), 1)
+
+ggcorrplot(corr,
+           type="lower",
+           lab=TRUE,
+           lab_size=3,
+           method="circle",
+           colors=c("tomato2", "white", "springgreen3"),
+           title="Correlation of variables in Training Data Set",
+           ggtheme=theme_bw)
+
+```
+
+Since the logistic regression requires there to be little or no multicollinearity among the independent variables. The variables rad and tax have a correlation of about 90%, I will drop one of these variables for my model.
+
+## Data Preparation
+
+In this section, we will prepare the dataset for logistic regression modeling.  Logistic regression does not make many of the key assumptions of linear regression and general linear models that are based on ordinary least squares algorithms – particularly regarding linearity, normality, homoscedasticity, and measurement level.
+
+### Objective
+
+The data for Logistic Regression doesn't have to be normally distrubuted. Hence, I will not be transforming these variables as transformation may lead to the risk of complicating the interpretation of the coefficients and Odds Ratios associated to the transformed covariates. However, I will drop the rad variable due to very high correlation with the tax variable.
+
+```{r}
+crime1 = crime[,!(names(crime) %in% c("rad"))]
+str(crime1)
+```
+The rad variable has been dropped to create the crime_train dataframe for building the models.
+
+```{r}
+table(crime1$target)
+prop.table(table(crime1$target))
+```
+Only 49% of the incident of crime is present in the dataset for this region.
+
+### Spliting the Crime dataset
+Use 80% for training and 20% for testing the model
+```{r}
+set.seed(101)
+train <- createDataPartition(y = crime1$target, p = 0.80, list = FALSE)
+crime_train <- crime1[train,]
+crime_test  <- crime1[-train,]
+```
+The Training dataset now has 373 observations with 12 variables and the testing has 93 observations with 12 variables.
+
+## Build Models 
+
+The Model is using all the variables, then applying Stepwise Variable Selection for additional Models. 
+
+### Logistic Model with Stepwise Variable Selection 
+
+Using all the Eleven (11) variables for the Model with Stepwise variable selection in both direction produced three (3) models with different AIC values.
+
+```{r}
+crime_logit <- step(glm(target ~., data = crime_train, family = binomial(link="logit")), direction="both")
+```
+
+Using this method produced three models with AIC = 214.84, AIC = 212.92 and AIC = 212.88. 
+
+```{r}
+summary(crime_logit)
+```
+The best model has 9 variables with the lowest AIC at 212.88 and converged after the eighth iteration.
+
+Viewing the summary of the Best Model gives the following information: The Variables for this Model are all significant since they have $\alpha < 0.05$.
+
+There are three variables that seems to be more significant in predicting crime, the variables are nox: nitrogen oxides concentration of the area, dis: weighted mean of distances to five Boston employment centers and medv: median value of owner-occupied homes of the area.
+
+### Calculating the odd ratio and the variable importance
+
+```{r}
+exp(cbind(Odds_Ratio=coef(crime_logit)))
+```
+
+```{r}
+varImp(crime_logit)
+```
+The variable importance shows that nox: nitrogen oxides concentration of the area, dis: weighted mean of distances to five Boston employment centers and medv: median value of owner-occupied homes of the area are more important in predicting the incidence of crime for this region.
+
+## Evaluating the Selected Model
+
+Calculate the Predicted Probabilities
+```{r,message=FALSE, warning=FALSE}
+prediction <- predict(crime_logit,newdata = crime_train,type="response")
+roccrime   <- roc(response = crime_train$target, predictor = prediction, 
+                  levels=base::levels(as.factor(crime_train$target)))
+```
+
+Calculate the Metrics or Fit Statistics for the model
+```{r,message=FALSE, warning=FALSE}
+predclass <-ifelse(prediction>coords(roccrime,"best")[1],1,0)
+ConfMatrix <- table(Predicted = predclass,Actual = crime_train$target)
+AccuracyRate <- sum(diag(ConfMatrix))/sum(ConfMatrix)
+Gini <-2*auc(roccrime)-1
+metric <- data.frame(c(coords(roccrime,"best"),AUC=auc
+                          (roccrime),AccuracyRate=AccuracyRate,Gini=Gini))
+metric <- data.frame(rownames(metric),metric)
+rownames(metric) <-NULL
+names(metric) <- c("Metric","Values")
+metric
+```
+
+The Accuracy for the selected model is approximately 89%
+
+Now lets view the Confusion Matrix and the ROC curve
+
+```{r}
+ConfMatrix 
+plot(roccrime)
+```
+
+### Using Test Dataset
+
+```{r,message=FALSE, warning=FALSE}
+prediction1 <- predict(crime_logit,newdata = crime_test,type="response")
+roccrime1   <- roc(response = crime_test$target, predictor = prediction1, 
+                  levels=base::levels(as.factor(crime_test$target)))
+```
+
+
+```{r,message=FALSE, warning=FALSE}
+predclass1 <-ifelse(prediction1>coords(roccrime1,"best")[1],1,0)
+ConfMatrix1 <- table(Predicted = predclass1,Actual = crime_test$target)
+AccuracyRate1 <- sum(diag(ConfMatrix1))/sum(ConfMatrix1)
+Gini1 <-2*auc(roccrime1)-1
+metric1 <- data.frame(c(coords(roccrime1,"best"),AUC=auc
+                          (roccrime1),AccuracyRate=AccuracyRate1,Gini=Gini1))
+metric1 <- data.frame(rownames(metric1),metric1)
+rownames(metric1) <-NULL
+names(metric1) <- c("Metric","Values")
+metric1
+```
+
+The Accuracy using the Test Data is at 87%
+
+Viewing the Confusion Matrix using the Test data
+
+```{r}
+ConfMatrix1 
+plot(roccrime1)
+
+```
+
+### Complete Classification Metrics
+
+This is the complete classification metrics using the Test data set for the best Model.
+
+```{r}
+Predicted <- predclass1
+Actual <- crime_test$target
+classifier_metrics <- ml_test(predicted = Predicted, true = Actual, output.as.table = FALSE)
+classifier_metrics
+```
+
+## Model Prediction
+
+Making predictions using the evaluation data set.
+
+```{r}
+prediction <- predict(crime_logit,newdata = crime_evaluation,type="response")
+new_target <-ifelse(prediction >= 0.5, 1, 0)
+eval <- data.frame(prediction, new_target)
+eval
+```
+
+```{r}
+table(new_target)
+prop.table(table(new_target))
+```
+There are 22 incidence predicted as "0" No Crime and 18 incidence predicted as "1" Crime. These values corresponds to 55% and 45% respectively.
+
+## Conclusion
+
+Evaluating the selected model using the training dataset shows that the model is performing at optimal level. The Accuracy of the model was obtained at 0.8981 which is about 89%. The model also shows that the Area Under the Curve (AUC) is 0.9589 which is 96%. 
+
+The model was able to accurately predict the True Positive (TP) at 163 and True Negative (TN) at 172. The Specificity (SP) of the Model was calculated as the number of correct negative predictions divided by the total number of negatives. It is also called true negative rate (TNR) and was 0.8821 (88%) while the Sensitivity (SN) of the model was calculated as the number of correct positive predictions divided by the total number of positives. It is also called Recall (REC) or true positive rate (TPR) and was 0.9157 (92%). 
+
+The Type I (FP) and Type II (FN) Errors were obtained as 23 and 15 respectively. The False positive rate (FPR) was calculated as the number of incorrect positive predictions divided by the total number of negatives which is 1 – specificity (1-SP)-> 1 - 0.8821 = 0.1179 which is quite low.
+False negative rate (FNR) is calculated as the number of incorrect negative predictions divided by the total number of positives which is 1 – sensitivity (1-SN) -> 1 - 0.9157 = 0.0843 which is another very low number.
+
+Evaluating the Model using a new data set the Testing data shows that the model is performing very well. The Accuracy of the model was obtained at 0.9032 which is about 90%. The model also shows that the Area Under the Curve (AUC) is 0.9608 which is 96%. 
+
+The model was able to accurately predict the True Positive (TP) at 50 and True Negative (TN) at 34. The Specificity (SP) of the Model was calculated as the number of correct negative predictions divided by the total number of negatives. It is also called true negative rate (TNR) and was 0.8095 (81%) while the Sensitivity (SN) of the model was calculated as the number of correct positive predictions divided by the total number of positives. It is also called recall (REC) or true positive rate (TPR) and was 0.9803 (98%). 
+
+The Type I (FP) and Type II (FN) Errors were obtained as 8 and 1 respectively. The False positive rate (FPR) was calculated as the number of incorrect positive predictions divided by the total number of negatives which is 1 – specificity (1-SP)-> 1 - 0.8095 = 0.1905 which is quite low.
+False negative rate (FNR) is calculated as the number of incorrect negative predictions divided by the total number of positives which is 1 – sensitivity (1-SN) -> 1 - 0.9803 = 0.0197 which is very good for a classifier of this nature.
+
+The Classification Error rate was obtained at 0.0968 which is good and less than 0.5 for this type of classifier and the nature of data provided. The precision for No Crime and Crime was obtained as 0.9714 and 0.8621 respectively. This gives an Average precision of 0.9168 (92%) which is another good metric to determine the performance of this Model.
+
+The F1 Score or Measure was obtained for No Crime and Crime was obtained as 0.9714 and 0.8621 respectively. This gives an Average F1 Score of 0.9167 (92%) which is also quite good for this Model.
+
+Using the Evaluation data provided, The Model was also able to predict new target with 22 incidence as "0" No Crime and 18 incidence as "1" Crime using the available features. These predictions corresponds to 55% and 45% respectively.
+
+
+
+
+
+
+
+
+
+
+

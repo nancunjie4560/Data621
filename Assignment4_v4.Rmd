@@ -1,0 +1,782 @@
+---
+title: "Assignment-4"
+author: Anil Akyildirim, John K. Hancock, John Suh, Emmanuel Hayble-Gomes, Chunjie Nan
+date: "04/05/2020"
+output:
+  pdf_document:
+    toc: yes
+  html_document:
+    code_download: yes
+    code_folding: hide
+    highlight: pygments
+    number_sections: yes
+    theme: flatly
+    toc: yes
+    toc_float: yes
+---
+
+# Introduction
+
+In this homework assignment, we will explore, analyze and model a data set containing approximately 8000 records representing a customer at an auto insurance company. Each record has two response variables. The first response variable, TARGET_FLAG, is a 1 or a 0. A “1” means that the person was in a car crash. A zero means that the person was not in a car crash. The second response variable is TARGET_AMT. This value is zero if the person did not crash their car. But if they did crash their car, this number will be a value greater than zero. 
+ 
+Our objective is to build multiple linear regression and binary logistic regression models on the training data to predict the probability that a person will crash their car and also the amount of money it will cost if the person does crash their car. You can only use the variables given to you (or variables that you derive from the variables provided). Below is a short description of the variables of interest in the data set: 
+
+## About the Data
+
+** Index: Identification Variable (do not use)
+
+** TARGET_FLAG: Was Car in a crash? 1=YES 0=NO
+
+** TARGET_AMT: If car was in a crash, what was the cost
+
+** AGE: Age of Driver
+
+** BLUEBOOK: Value of Vehicle
+
+** CAR_AGE: Vehicle Age
+
+** CAR_TYPE: Type of Car
+
+** CAR_USE: Vehicle Use
+
+** CLM_FREQ: # Claims (Past 5 Years)
+
+** EDUCATION: Max Education Level
+
+** HOMEKIDS: # Children at Home
+
+** HOME_VAL: Home Value
+
+** INCOME: Income
+
+** JOB: Job Category
+
+** KIDSDRIV: # Driving Children
+
+** MSTATUS: Marital Status
+
+** MVR_PTS: Motor Vehicle Record Points
+
+** OLDCLAIM: Total Claims (Past 5 Years)
+
+** PARENT1: Single Parent
+
+** RED_CAR: A Red Car
+
+** REVOKED: License Revoked (Past 7 Years)
+
+** SEX: Gender
+
+** TIF: Time in Force
+
+** TRAVTIME: Distance to Work
+
+** URBANICITY: Home/Work Area
+
+** YOJ: Years on Job
+
+# Data Exploration
+
+```{r}
+# Load Libraries
+library(ggplot2)
+library(ggcorrplot)
+library(corrplot)
+library(psych)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(MASS)
+library(pROC)
+library(glmnet)
+library(mltest)
+library(stringr)
+library(ggpubr)
+library(geoR)
+library(mice)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+library(MuMIn)
+```
+
+```{r}
+# Load the Datasets
+
+insurance_train <- read.csv("https://raw.githubusercontent.com/anilak1978/data621/master/insurance_training_data.csv")
+
+insurance_eva <- read.csv("https://raw.githubusercontent.com/anilak1978/data621/master/insurance-evaluation-data.csv")
+
+```
+
+We have loaded  both train and evaluation data sets into R. Let's take a look at the first few observations in the training and evaluation data set. 
+
+```{r}
+head(insurance_train)
+```
+
+```{r}
+
+head(insurance_eva)
+
+
+```
+
+
+We have some issues with the data values with $. on some columns. We also columns that have "z_" and "<" values. 
+
+Let's fix the "$" in both training and evaluation datasets. 
+
+```{r}
+
+currency_fix <- function(x) {
+  num <- str_replace_all(x, "\\$","")
+  num <- as.numeric(str_replace_all(num, "\\,",""))
+  num
+}
+
+```
+
+```{r}
+#train data
+insurance_train$INCOME <- currency_fix(insurance_train$INCOME)
+insurance_train$HOME_VAL <- currency_fix(insurance_train$HOME_VAL)
+insurance_train$BLUEBOOK <- currency_fix(insurance_train$BLUEBOOK)
+insurance_train$OLDCLAIM <- currency_fix(insurance_train$OLDCLAIM)
+
+# test data
+insurance_eva$INCOME <- currency_fix(insurance_eva$INCOME)
+insurance_eva$HOME_VAL <- currency_fix(insurance_eva$HOME_VAL)
+insurance_eva$BLUEBOOK <- currency_fix(insurance_eva$BLUEBOOK)
+insurance_eva$OLDCLAIM <- currency_fix(insurance_eva$OLDCLAIM)
+
+```
+
+Now lets fix the "z_" and "<" in both train and evaluation data sets. 
+
+```{r}
+# train data
+insurance_train[sapply(insurance_train, is.factor)] <- lapply(insurance_train[sapply(insurance_train, is.factor)], 
+                                        function(x) str_replace(x,"z_|<",""))
+
+insurance_train[sapply(insurance_train, is.character)] <- lapply(insurance_train[sapply(insurance_train, is.character)],as.factor) 
+
+# test data
+insurance_eva[sapply(insurance_eva, is.factor)] <- lapply(insurance_eva[sapply(insurance_eva, is.factor)], 
+                                        function(x) str_replace(x,"z_|<",""))
+
+insurance_eva[sapply(insurance_eva, is.character)] <- lapply(insurance_eva[sapply(insurance_eva, is.character)],as.factor) 
+
+```
+
+We fixed the strange characters in both train and evaluation data sets. Let's look at the structure of our training data sets.
+
+```{r}
+
+str(insurance_train)
+
+```
+
+We have two response variables `TARGET_FLAG`and `TARGET_AMT` contains numerical and binary values. We want to make sure the binary TARGET_FLAG response variable is a factor for our Data Exploration. 
+
+```{r}
+# train data
+insurance_train$TARGET_FLAG=as.factor(insurance_train$TARGET_FLAG)
+
+# test data
+insurance_eva$TARGET_FLAG=as.factor(insurance_eva$TARGET_FLAG)
+```
+
+
+We can also ignore the INDEX variable as it doesnt have any impact to analysis. 
+
+KIDSDRIV, HOMEKIDS, CLM_FREQ, MVR_PTS, AGE, YOJ, TRAVTIME, TIF, CAR_AGE are discrete variables. PARENT1, MSTATUS, SEX, CAR_USE, RED_CAR, REVOKED, URBANCITY are binary categorical variables. JOB, CAR_TYPE, EDUCATION are other categorical variables. INCOME, HOME_VAL, BLUEBOOK and OLDCLAIM are continous numerical variables.  
+
+Let's review some of the basic descriptive statistics.
+
+```{r}
+# look at descriptive statistics
+metastats <- data.frame(describe(insurance_train))
+metastats <- tibble::rownames_to_column(metastats, "STATS")
+metastats["pct_missing"] <- round(metastats["n"]/8161, 3)
+head(metastats)
+```
+
+```{r}
+summary(insurance_train)
+```
+
+Let's look to see if there are any missing values. 
+
+```{r}
+colSums(is.na(insurance_train))
+colSums(is.na(insurance_eva))
+
+```
+
+```{r}
+# Percentage of missing values
+missing_values <- metastats %>%
+  filter(pct_missing < 1) %>%
+  dplyr::select(STATS, pct_missing) %>%
+  arrange(pct_missing)
+missing_values
+
+```
+
+We have some missing values. We will fix them at the Data Preperation section. 
+
+As part of data exploration, we would like to find out dsitribution of categorical, descrete and continous variables. We will also see the outliers and analyze the skewness of the variables. We will further look at the correlation between variables to see if there are multicollinearity among the independent variables.
+
+Let's start looking at the distribution of each descriptive, categorical and continous variables individually.  
+
+```{r fig1, fig.height=20, fig.width= 15, fig.align='center'}
+# Distribution for KIDSDRIV
+s1 <- ggplot(insurance_train, aes(KIDSDRIV))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for HOMEKIDS
+s2 <- ggplot(insurance_train, aes(HOMEKIDS))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for PARENT1
+s3 <- ggplot(insurance_train, aes(PARENT1))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for MSTATUS
+s4 <- ggplot(insurance_train, aes(MSTATUS))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for SEX
+s5 <- ggplot(insurance_train, aes(SEX))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for EDUCATION
+s6 <- ggplot(insurance_train, aes(EDUCATION))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for JOB
+s7 <- ggplot(insurance_train, aes(JOB))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for CAR_USE
+s8 <- ggplot(insurance_train, aes(CAR_USE))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for CAR_TYPE
+s9 <- ggplot(insurance_train, aes(CAR_TYPE))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for RED_CAR
+s10 <- ggplot(insurance_train, aes(RED_CAR))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for REVOKED
+s11 <- ggplot(insurance_train, aes(REVOKED))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for URBAN CITY
+s12 <- ggplot(insurance_train, aes(URBANICITY))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+# Distribution for CLM_FREQ
+s13 <- ggplot(insurance_train, aes(CLM_FREQ))+
+  geom_bar(aes(fill=TARGET_FLAG), width = 0.5) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))
+
+
+grid.arrange(s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, nrow=7)
+
+
+```
+
+When we look at the distribution of Kids Driving, we see that most of them are not in a car crash. Distribution of Kids being home, we see that most of them are not in a car crash. Single Parent distribution, we see most of the non single parent families are not in a car crash. Distribution of Marriage Status displaying is that, most married families are not in a car crash. 
+
+Additionaly looking at distribution of the categorical variables, we can see that KIDSDRIV and PARENT1 shows us that if we dont have any kids, it is more likely for us to have a car crash. Being male or female doesnt really matter in terms of car crashes. We also see that high school students, blue collor employees, SUV owners, people that had their license revoked get into more car crash.
+
+
+```{r fig2, fig.height=20, fig.width= 15, fig.align='center'}
+#Distribution AGE
+a1 <- ggplot(insurance_train, aes(AGE)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+#Distribution YOJ
+a2 <- ggplot(insurance_train, aes(YOJ)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution TRAVTIME
+a3 <- ggplot(insurance_train, aes(TRAVTIME)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution TIF
+a4 <- ggplot(insurance_train, aes(TIF)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution CAR_AGE
+a5 <- ggplot(insurance_train, aes(CAR_AGE)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution INCOME
+a6 <- ggplot(insurance_train, aes(INCOME)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution BLUEBOOK
+a7 <- ggplot(insurance_train, aes(BLUEBOOK)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+#Distribution OLDCLAIM
+a8 <- ggplot(insurance_train, aes(OLDCLAIM)) + scale_fill_brewer(palette = "Spectral")+
+  geom_histogram(aes(fill=TARGET_FLAG), 
+                   bins=5, 
+                   col="black")
+
+grid.arrange(a1, a2, a3, a4, a5, a6, a7, a8, nrow=4)
+
+```
+
+
+We can see the distribution and skeweness from above plots.  In terms of distribution, we see only AGE and YOJ is normally distributed and the rest of the variables had some sort of skeweness. When creating our models, with some of them, we will transform the data, handle the skeweness in order to create a more accurate model. 
+
+Let's look at the correlation.
+
+```{r fig3, fig.height=10, fig.width= 15, fig.align='center'}
+insurance_train_num <- data.frame(lapply(insurance_train, function(x) as.numeric(as.factor(x))))
+
+corr <- cor(insurance_train_num)
+options(repr.plot.width = 14, repr.plot.height = 8)
+ggcorrplot(corr)
+
+
+```
+
+Based on the correlation matrix, we see that MVR_PTS, CLM_FREQ and OLDCLAIM have the most correlation with the response variables. There are little to no multicollinearity among the independent variables. 
+
+Let's further look to see if there are any outliers.
+
+
+```{r fig4, fig.height=20, fig.width= 15, fig.align='center'}
+
+b1 <- ggplot(insurance_train, aes(TARGET_FLAG, AGE))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b2 <- ggplot(insurance_train, aes(TARGET_FLAG, BLUEBOOK))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b3 <- ggplot(insurance_train, aes(TARGET_FLAG, CAR_AGE))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b4 <- ggplot(insurance_train, aes(TARGET_FLAG, HOME_VAL))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b5 <- ggplot(insurance_train, aes(TARGET_FLAG, INCOME))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b6 <- ggplot(insurance_train, aes(TARGET_FLAG, MVR_PTS))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b7 <- ggplot(insurance_train, aes(TARGET_FLAG, OLDCLAIM))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b8 <- ggplot(insurance_train, aes(TARGET_FLAG, TIF))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b9 <- ggplot(insurance_train, aes(TARGET_FLAG, TRAVTIME))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+b10 <- ggplot(insurance_train, aes(TARGET_FLAG, YOJ))+
+  geom_boxplot(varwidth=T, fill="plum")
+
+grid.arrange(b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, nrow=5)
+```
+
+Based on the above; we can see that BLUEBOOK, INCOME, OLDCLAIM have high number of outliers. 
+
+# Data Preperation
+
+In the data preperation phase, we will mostly handle the missing values in both training and evaluation data set. We will handle the missing values by using mice package. Here are some references for this package; (https://datascienceplus.com/imputing-missing-data-with-r-mice-package/ , https://www.analyticsvidhya.com/blog/2016/03/tutorial-powerful-packages-imputing-missing-values/, https://cran.r-project.org/web/packages/mice/mice.pdf )
+
+Based on my search It is commonly used package for creating multiple imputations, instead of one single one such as replacing nan with mean. We will apply mice package imputation for both testing and evaluation data sets.
+
+```{r}
+# multiple imputations to train data
+init <- mice(insurance_train)
+meth <- init$method
+predM <- init$predictorMatrix
+predM[, c("TARGET_FLAG", "TARGET_AMT")] <- 0 
+insurance_train_clean <- mice(insurance_train, method = 'rf', predictorMatrix=predM)
+insurance_train_cleaned <- complete(insurance_train_clean)
+print(paste0("Missing value: ", sum(is.na(insurance_train_cleaned))))
+
+```
+
+We should also apply the same to the  evluation data set as well.
+
+
+```{r}
+
+# multiple imputations to test data 
+insurance_eva$AGE <- ifelse(is.na(insurance_eva$AGE), mean(insurance_eva$AGE),insurance_eva$AGE)
+init <- mice(insurance_eva)
+meth <- init$method
+predM <- init$predictorMatrix
+insurance_eva_clean <- mice(insurance_eva, method = 'rf', predictorMatrix=predM)
+insurance_eva_cleaned <- complete(insurance_eva_clean)
+insurance_eva_cleaned <- data.frame(lapply(insurance_eva_cleaned, function(x) as.numeric(as.factor(x))))
+print(paste0("Missing value: ", sum(is.na(insurance_eva_cleaned))))
+
+
+```
+
+Before we start building our models, we have to create train and test data sets for both logistic and multiple linear regression. We will split the insurance_train_cleaned data set 80/20 into training and testing datasets. 
+
+```{r}
+#split data into test and train for both models.
+set.seed(101)
+train_logistic <- createDataPartition(y = insurance_train_cleaned$TARGET_FLAG, p = 0.80, list = FALSE) #logistic model partition
+train_multiple <- createDataPartition(y = insurance_train_cleaned$TARGET_AMT, p = 0.80, list = FALSE) #test model partition
+insurance_train_logistic <- insurance_train_cleaned[train_logistic,]
+insurance_test_logistic  <- insurance_train_cleaned[-train_logistic,]
+insurance_train_multiple <- insurance_train_cleaned[train_multiple,]
+insurance_test_multiple <- insurance_train_cleaned[-train_multiple,]
+
+```
+
+Let's look at how we broke out the test and train datasets.
+
+```{r}
+str(insurance_train_logistic)
+```
+
+Training model now has 6530 observations and test data set has  1631 observations.
+
+
+# Build Models
+
+In our first model, we will create Multiple Linear Regression Model and use the TARGET_AMT as the response variable and use all the explanatory variables. In this model, we will use the imputed data training data set. 
+
+```{r}
+# create model 1 multiple regression
+insurance_numeric <- data.frame(lapply(insurance_train_multiple, function(x) as.numeric(as.factor(x))))
+insurance_numeric <- dplyr::select(insurance_numeric, -"TARGET_FLAG") #change data types to numeric
+model_1 <- lm(TARGET_AMT ~ ., insurance_numeric)
+summary(model_1)
+
+```
+
+We have a low p value and our Adjusted R-squared is 0.15. We can only explain 15% of the data with this model. This is definately not a good model. 
+
+In our second model we will use the same model, let's try to use the training data set without the  transformation (non imputed data), use TARGET_AMT as the response variable and use all the explanatory variables.
+
+```{r}
+# create model 2 multiple regression
+insurance_numeric_2 <- data.frame(lapply(insurance_train, function(x) as.numeric(as.factor(x))))
+insurance_numeric_2 <- dplyr::select(insurance_numeric_2, -"TARGET_FLAG") #remove TARGET_FLAG
+model_2 <- lm(TARGET_AMT ~ ., insurance_numeric_2)
+summary(model_2)
+
+
+```
+
+Again our R-squared is really low 0.15 and we can only explain 15% of the data with this model.
+
+In our third model, we will create a model, using logistic regression, use TARGET_FLAG as the response variable and use all the explanatory varibles.
+
+```{r}
+# create model 3 binary logistic regression
+logit_data <- data.frame(lapply(insurance_train_logistic, function(x) as.numeric(as.factor(x)))) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG)) %>% 
+  dplyr::select(-"TARGET_AMT")
+
+model_3 <- glm(TARGET_FLAG ~ ., family = "binomial", logit_data)
+summary(model_3)
+
+
+```
+
+All predictors are significant (we can of course ignore index) except KIDSDRIV, TRAVTIME, CLM_FREQ. We will further look at the accuracy, roc and auc at our model selection section. 
+
+In our 4th model, we will create a logistic regression model, using TARGET_FLAG as the response variable and all the explanatory variables on non imputed data.
+
+```{r}
+# model 4 binary logistic model
+logit_data_2 <- data.frame(lapply(insurance_train, function(x) as.numeric(as.factor(x)))) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG)) %>% 
+  dplyr::select(-"TARGET_AMT")
+
+model_4 <- glm(TARGET_FLAG ~ ., family = "binomial", logit_data_2)
+summary(model_4)
+
+```
+
+In model 4 , PARENT1, HOME_VAL JOB and URBANCITY predictors are significant in predicting TARGET_FLAG. 
+
+In our 5th model, we will create a stepwise transformed logistic regression model, leveraging Model which uses TARGET_FLAG as the response variable, and all the explanatory variables on cleaned trained and transformed data.
+
+```{r}
+#build model 5 binary logistic model
+model_5 <- stepAIC(model_3, direction = "both", trace = FALSE)
+summary(model_5)
+
+
+```
+
+Addition to the 5 models we created, we can handle skweness of certain variables with boxcox transformation and create updated models. Our 6th model will boxcox transformation and use all variables as explanatory variables and response variable TARGET_FLAG. 
+
+
+```{r}
+# build model 6 binary logistic model
+insurance_transformed <- preProcess(logit_data, c("BoxCox"))
+insurance_transformed_1 <- predict(insurance_transformed, logit_data)
+model_6 <- glm(TARGET_FLAG ~ ., family = "binomial", insurance_transformed_1)
+summary(model_6)
+
+
+```
+
+Since two multiple linear regression model we created have low R-squared values. We will create two more with boxcox transformation of explanatory variables. 
+
+```{r}
+#build model 7 multiple regression
+insurance_transformed_2 <- preProcess(insurance_numeric, c("BoxCox"))
+insurance_transformed_3<- predict(insurance_transformed_2, insurance_numeric)
+model_7 <- lm(TARGET_AMT ~ ., insurance_transformed_3)
+summary(model_7)
+```
+
+We improved the R-squared however, it is still not good for a decent model. We will apply log transformation for the response variable TARGET_AMT, square root transformation for income variable, quarter root transformation for HOME_VAL variable in order to fix the skeweness. 
+
+
+```{r}
+# build model 8 multiple regression model
+boxcoxfit(insurance_train_multiple$TARGET_AMT[insurance_train_multiple$TARGET_FLAG==1]) # highly #right skewed 
+insurance_train_multiple$TARGET_AMT <- log(insurance_train_multiple$TARGET_AMT) # log transformation
+boxcoxfit(insurance_train_multiple$INCOME[insurance_train_multiple$INCOME >0]) 
+insurance_train_multiple$INCOME <- insurance_train_multiple$INCOME ^0.5 #square root transformation
+boxcoxfit(insurance_train_multiple$HOME_VAL[insurance_train_multiple$HOME_VAL > 0]) 
+insurance_train_multiple$HOME_VAL <- insurance_train_multiple$HOME_VAL^0.25 # quarter root transformation
+boxcoxfit(insurance_train_multiple$BLUEBOOK)
+insurance_train_multiple$BLUEBOOK <- insurance_train_multiple$BLUEBOOK^0.5 # square root transformation
+boxcoxfit(insurance_train_multiple$OLDCLAIM[insurance_train_multiple$OLDCLAIM>0])
+insurance_train_multiple$OLD_CLAIM <- log(insurance_train_multiple$OLDCLAIM + 1)  #log(x+1) transformation
+
+insurance_numeric_3 <- data.frame(lapply(insurance_train_multiple, function(x) as.numeric(as.factor(x))))
+
+```
+
+```{r}
+#build multiple regression model continued 
+model_8 <- lm(TARGET_AMT ~. , data=insurance_numeric_3)
+summary(model_8)
+
+```
+
+With the last multiple linear regression, we were able to improve the first three models we created. With this model, we are able to explain 70% of the variablity in the data. 
+
+# Select Models
+
+First, let's start with the binary logistic models and compare the fits of them.
+
+
+
+
+```{r}
+model_3_out <- cbind(AIC=AIC(model_3), AICc=AICc(model_3), BIC = BIC(model_3), loglik=logLik(model_3))
+model_4_out <- cbind(AIC=AIC(model_4), AICc=AICc(model_4), BIC = BIC(model_4), loglik=logLik(model_4))
+model_5_out <- cbind(AIC=AIC(model_5), AICc=AICc(model_5), BIC = BIC(model_5), loglik=logLik(model_5))
+model_6_out <- cbind(AIC=AIC(model_6), AICc=AICc(model_6), BIC = BIC(model_6), loglik=logLik(model_6))
+
+
+model_comp <- rbind(model_3_out, model_4_out, model_5_out, model_6_out)
+rownames(model_comp) <- c("model_3","model_4","model_5","model_6")
+
+model_comp
+```
+
+Based on these we can look at model 3,5 and 6 which we used imputed train data set.
+
+```{r}
+# convert the insurance test data set to logit data
+logit_data_test <- data.frame(lapply(insurance_test_logistic, function(x) as.numeric(as.factor(x)))) %>% 
+  mutate(TARGET_FLAG = as.factor(TARGET_FLAG)) %>% 
+  dplyr::select(-"TARGET_AMT")
+
+
+
+```
+
+
+
+```{r}
+
+# models 3,5,6 prediction probs using test dataset. 
+m3_pred <- predict(model_3, logit_data_test, type="response")
+m5_pred <- predict(model_5, logit_data_test, type="response")
+m6_pred <- predict(model_6, logit_data_test, type="response")
+
+#AUC
+paste("Model 3:",round(as.numeric(roc(logit_data_test$TARGET_FLAG, m3_pred)["auc"]),3))
+paste("Model 5:",round(as.numeric(roc(logit_data_test$TARGET_FLAG, m5_pred)["auc"]),3))
+paste("Model 6 mod:",round(as.numeric(roc(logit_data_test$TARGET_FLAG, m6_pred)["auc"]),3))
+
+
+
+
+
+```
+
+
+Model  3 and 5 has higher accuracy score. Let's build metrics table using predictions with the test data set. 
+
+```{r}
+# comparing all binary logistic models using various measures
+m3 <- confusionMatrix(as.factor(as.integer(fitted(model_3) > .5)), as.factor(model_3$y), positive = "1")
+m5 <- confusionMatrix(as.factor(as.integer(fitted(model_5) > .5)), as.factor(model_5$y), positive = "1")
+m6 <- confusionMatrix(as.factor(as.integer(fitted(model_6) > .5)), as.factor(model_6$y), positive = "1")
+
+
+```
+
+
+```{r}
+
+roc3 <- roc(logit_data_test$TARGET_FLAG,  predict(model_3, logit_data_test, interval = "prediction"))
+roc5 <- roc(logit_data_test$TARGET_FLAG,  predict(model_5, logit_data_test, interval = "prediction"))
+roc6 <- roc(logit_data_test$TARGET_FLAG,  predict(model_6, logit_data_test, interval = "prediction"))
+
+```
+
+
+
+```{r}
+
+metrics_3 <- c(m3$overall[1], "Class. Error Rate" = 1 - as.numeric(m3$overall[1]), m3$byClass[c(1, 2, 5, 7)], AUC = roc3$auc)
+metrics_5 <- c(m5$overall[1], "Class. Error Rate" = 1 - as.numeric(m5$overall[1]), m5$byClass[c(1, 2, 5, 7)], AUC = roc5$auc)
+metrics_6 <- c(m6$overall[1], "Class. Error Rate" = 1 - as.numeric(m6$overall[1]), m6$byClass[c(1, 2, 5, 7)], AUC = roc6$auc)
+
+
+```
+
+
+
+
+```{r}
+kable(cbind(metrics_3, metrics_5, metrics_6), col.names = c("Model 3", "Model 5", "Model 5"))  %>% 
+  kable_styling(full_width = T)
+
+
+
+```
+
+Based on the accuracy and auc which is based on True Positive Rate and False Positive Rate, we can select either Model 3, 4 and or 5. Considering Accuracy is slightly higher on Model 3, we might want to use that for our predictions. 
+
+Let's also plot the ROC curve for each binary logistic model.
+
+```{r}
+# plotting roc curve of model 3
+plot(roc(logit_data$TARGET_FLAG,  predict(model_3, logit_data, interval = "prediction")), print.auc = TRUE, main = "Model 3" )
+
+# plotting roc curve of model 4
+plot(roc(logit_data$TARGET_FLAG,  predict(model_4, logit_data, interval = "prediction")), print.auc = TRUE, main = "Model 4" )
+
+# plotting roc curve of model 5
+plot(roc(logit_data$TARGET_FLAG,  predict(model_5, logit_data, interval = "prediction")), print.auc = TRUE, main = "Model 5" )
+
+# plotting roc curve of model 6
+plot(roc(logit_data$TARGET_FLAG,  predict(model_6, logit_data, interval = "prediction")), print.auc = TRUE, main = "Model 6" )
+
+
+```
+
+
+```{r}
+# comparing all multiple regression models
+a1 <- mean((summary(model_1))$residuals^2)
+a2 <- mean((summary(model_2))$residuals^2)
+a3 <- mean((summary(model_7))$residuals^2)
+a4 <- mean((summary(model_8))$residuals^2)
+a5 <- rbind(a1, a2, a3, a4)
+ 
+b1 <- summary(model_1)$r.squared
+b2 <- summary(model_2)$r.squared
+b3 <- summary(model_7)$r.squared
+b4 <- summary(model_8)$r.squared
+b5 <- rbind(b1, b2, b3, b4)
+
+c1 <- summary(model_1)$fstatistic
+c2 <- summary(model_2)$fstatistic
+c3 <- summary(model_7)$fstatistic
+c4 <- summary(model_8)$fstatistic
+c5 <- rbind(c1, c2, c3, c4)
+
+
+mlr_metrics <- data.frame(cbind(a5, b5, c5), row.names = c("Model 1", "Model 2", "Model 7", "Model 8"))
+colnames(mlr_metrics) <- c("MSE", "R-Squared", "value", "numdf", "dendf")
+kable(mlr_metrics) %>% 
+  kable_styling(full_width = T) %>% 
+  add_header_above(c(" ", " " = 2, "F-Statistic" = 3))
+
+```
+
+When comparing the two Multiple Linear Regression Models we created, we see that the R-squared for both models are low. Both of our models are not right for the data. 15% of these models fits with the data. The last multiple linear regression model we created has 0.69 R-squared value, which makes it the right model to select for multiple linear regression model.
+
+## Prediction 
+
+We created 8 models and based on the statistic metrics for each model, we can select model 3 and model 8 to make predictions. 
+
+
+
+```{r}
+
+mypred <- predict(model_3, insurance_eva_cleaned, type='response')
+insurance_eva_cleaned$TARGET_FLAG <- ifelse(mypred  >= 0.276, 1, 0)
+write.csv(insurance_eva_cleaned, "evaluation_TARGET_FLAG.csv")
+
+```
+
+```{r}
+# since we selected model 8 we have to apply the same log transformation to the response variables in evaluation data set. 
+insurance_eva_cleaned$TARGET_AMT <- log(insurance_eva_cleaned$TARGET_AMT) # log transformation
+insurance_eva_cleaned$INCOME <- insurance_eva_cleaned$INCOME ^0.5 #square root transformation
+insurance_eva_cleaned$HOME_VAL <- insurance_eva_cleaned$HOME_VAL^0.25 # quarter root transformation
+insurance_eva_cleaned$BLUEBOOK <- insurance_eva_cleaned$BLUEBOOK^0.5 # square root transformation
+insurance_eva_cleaned$OLD_CLAIM <- log(insurance_eva_cleaned$OLDCLAIM + 1)  #log(x+1) transformation
+
+mypred_2 <- exp(predict(model_8, insurance_eva_cleaned))
+insurance_eva_cleaned$TARGET_AMT <- mypred_2
+write.csv(insurance_eva_cleaned, "evaluation_TARGET_AMT.csv")
+
+
+```
+
+# Conclusion
+
+Based on the evaluation of Binary Logistic Models, we can select Model 3 which has the highest Accuracy about 79%. The same model also shows that the Area Under the Curve(AUC) is about 81%. For the Multiple Linear Regression Model, we can select Model 8 with since R-squared is 0.69. The prediction for TARGET_AMT and TARGET_FLAG can be found as csv file in our github repo.
+
+
+
+
